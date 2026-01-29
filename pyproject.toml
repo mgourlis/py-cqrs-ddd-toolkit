@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "py-cqrs-ddd-toolkit"
+version = "0.1.0"
+description = "A framework-agnostic Python library for building CQRS and DDD applications with declarative decorators"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Myron Gourlis" }
+]
+keywords = ["cqrs", "ddd", "domain-driven-design", "mediator", "event-sourcing", "command", "query"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+
+# Zero core dependencies
+dependencies = []
+
+[project.optional-dependencies]
+pydantic = ["pydantic>=2.0"]
+sqlalchemy = ["sqlalchemy>=2.0"]
+fastapi = ["fastapi>=0.100", "pydantic>=2.0"]
+django = ["django>=4.2"]
+inject = ["dependency-injector>=4.0"]
+redis = ["redis>=5.0"]
+dramatiq = ["dramatiq[rabbitmq, watch]>=1.15"]
+rabbitmq = ["aio-pika>=8.0"]
+dramatiq-abort = ["dramatiq-abort>=0.1", "redis>=5.0"]
+opentelemetry = ["opentelemetry-api>=1.0", "opentelemetry-sdk>=1.0"]
+sentry = ["sentry-sdk>=1.0"]
+storage-local = ["aiofiles>=23.0"]
+storage-s3 = ["aiobotocore>=2.5"]
+storage-dropbox = ["httpx>=0.25"]
+storage-gcs = ["gcloud-aio-storage>=8.0"]
+# Development extras
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.1",
+    "mypy>=1.0",
+    "httpx>=0.25",
+    "aio-pika>=8.0",
+]
+all = [
+    "py-cqrs-ddd-toolkit[pydantic,sqlalchemy,fastapi,django,inject,redis,dramatiq,dramatiq-abort,rabbitmq,dev,opentelemetry,sentry,storage-local,storage-s3,storage-dropbox,storage-gcs]",
+]
+
+[project.urls]
+Homepage = "https://github.com/mgourlis/py-cqrs-ddd-toolkit"
+Documentation = "https://github.com/mgourlis/py-cqrs-ddd-toolkit#readme"
+Repository = "https://github.com/mgourlis/py-cqrs-ddd-toolkit"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cqrs_ddd"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--cov=src/cqrs_ddd --cov-report=term-missing"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
