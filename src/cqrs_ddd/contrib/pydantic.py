@@ -256,7 +256,7 @@ def import_uuid():
 SagaStateT = TypeVar('SagaStateT', bound=BaseModel)
 
 if HAS_PYDANTIC:
-    class PydanticSaga(Generic[SagaStateT], Saga):
+    class PydanticSaga(Saga[SagaStateT]):
         """
         Base class for Sagas using Pydantic for state management.
         
@@ -269,39 +269,60 @@ if HAS_PYDANTIC:
                 
                 async def on_Event(self, event):
                     self.state.counter += 1
-                    # self.context.state is automatically updated
+                    # self.context.state is automatically sync'd via _sync_state
         """
         state_model: Type[SagaStateT]
         
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            # Lazy initialize typed state from context dict
-            self._typed_state: Optional[SagaStateT] = None
-
-        @property
-        def state(self) -> SagaStateT:
-            """Get validated typed state."""
-            if self._typed_state is None:
-                self._typed_state = self.state_model(**self.context.state)
-            return self._typed_state
-
-        async def handle_event(self, event: Any) -> None:
-            """
-            Override handle_event to ensure state is synchronized 
-            back to context after step execution (including compensation).
-            """
-            try:
-                await super().handle_event(event)
-            finally:
-                # Sync back even if an exception occurred (e.g. during compensation)
-                if self._typed_state is not None:
+        def _load_state(self):
+            """Load state from context into Pydantic model."""
+            # Use explicit state_model if provided (preferred for PydanticSaga)
+            # otherwise fall back to base logic (which might be fragile with Generics)
+            model_cls = getattr(self, "state_model", None)
+            
+            if model_cls:
+                if self.context.state:
                     try:
-                        # V2
-                        self.context.state.update(self._typed_state.model_dump())
-                    except AttributeError:
-                        # V1 fallback
-                        self.context.state.update(self._typed_state.dict())
+                        # Validate and Load
+                        self._state = model_cls(**self.context.state)
+                    except Exception as e:
+                        # Log and Re-raise (Corrupted State)
+                        from ..saga import logger
+                        logger.error(f"Failed to load Pydantic state for {self.id}: {e}")
+                        raise ValueError(f"Saga State Corruption: {e}") from e
+                else:
+                    # Initialize default
+                    self._state = model_cls()
+            else:
+                 super()._load_state()
 
+        async def start(self, initial_data: Any) -> None:
+            """Start the saga with initial data (supports Pydantic models)."""
+            self.context.updated_at = self.context.updated_at # touch
+            
+            if isinstance(initial_data, BaseModel):
+                self._state = initial_data
+            elif isinstance(initial_data, dict):
+                model_cls = getattr(self, "state_model", None)
+                if model_cls:
+                    self._state = model_cls(**initial_data)
+                else:
+                    # Fallback to base behavior (generic or dict)
+                    await super().start(initial_data)
+                    return
+            else:
+                 await super().start(initial_data)
+                 return
+
+        def _sync_state(self):
+            """Sync Pydantic state back to context.state dict."""
+            if isinstance(self._state, BaseModel):
+                self.context.state.clear()
+                self.context.state.update(self._state.model_dump())
+            else:
+                super()._sync_state()
+
+        # NOTE: We do not need to override handle_event because
+        # the base Saga class calls _sync_state() after handler execution.
 
     class PydanticOutboxMessage(BaseModel, AbstractOutboxMessage):
         """
@@ -317,6 +338,7 @@ if HAS_PYDANTIC:
         retries: int = 0
         error: Optional[str] = None
         processed_at: Optional[Any] = None
+
 
 else:
     # Fallback for no Pydantic

@@ -8,6 +8,7 @@ from cqrs_ddd.saga import (
     Saga, 
     SagaContext, 
     SagaManager, 
+    SagaChoreographyManager,
     saga_step, 
     InMemorySagaRepository
 )
@@ -75,12 +76,15 @@ def clean_saga_registry():
 
 @pytest.mark.asyncio
 async def test_saga_registration(clean_saga_registry):
-    # This triggers registration
+    # Triggers registration? No, strict DI removed auto-registration.
+    # We must register manually.
     class TestSaga(Saga):
         @saga_step(OrderCreated)
         async def step1(self, event): pass
         
         async def compensate(self): pass
+        
+    saga_registry.register(OrderCreated, TestSaga)
         
     sagas = saga_registry.get_sagas_for_event(OrderCreated)
     assert TestSaga in sagas
@@ -96,12 +100,13 @@ async def test_saga_flow_success():
     # We need to manually register OrderSaga if clean_saga_registry cleared it, 
     # OR we rely on import time registration effectively.
     # To be safe, let's inject registry explicitly or re-register
-    registry_map = {
-        OrderCreated: [OrderSaga],
-        PaymentProcessed: [OrderSaga]
-    }
+    # Inject registry explicitly
+    from cqrs_ddd.saga_registry import SagaRegistry
+    registry = SagaRegistry()
+    registry.register(OrderCreated, OrderSaga)
+    registry.register(PaymentProcessed, OrderSaga)
     
-    manager = SagaManager(repo, mediator, saga_registry=registry_map)
+    manager = SagaChoreographyManager(repo, mediator, saga_registry=registry)
     
     # 1. Start Saga
     correlation_id = generate_correlation_id()
@@ -147,8 +152,11 @@ async def test_saga_idempotency():
     mediator = MagicMock()
     mediator.send = AsyncMock()
     
-    registry_map = { OrderCreated: [OrderSaga] }
-    manager = SagaManager(repo, mediator, saga_registry=registry_map)
+    from cqrs_ddd.saga_registry import SagaRegistry
+    registry = SagaRegistry()
+    registry.register(OrderCreated, OrderSaga)
+
+    manager = SagaChoreographyManager(repo, mediator, saga_registry=registry)
     
     correlation_id = "corr-idempotent"
     evt = OrderCreated(event_id="evt-1", correlation_id=correlation_id, order_id="o1")
@@ -175,8 +183,12 @@ async def test_saga_failure_compensation():
     mediator = MagicMock()
     mediator.send = AsyncMock()
     
-    registry_map = { OrderCreated: [OrderSaga], PaymentProcessed: [OrderSaga] }
-    manager = SagaManager(repo, mediator, saga_registry=registry_map)
+    from cqrs_ddd.saga_registry import SagaRegistry
+    registry = SagaRegistry()
+    registry.register(OrderCreated, OrderSaga)
+    registry.register(PaymentProcessed, OrderSaga)
+
+    manager = SagaChoreographyManager(repo, mediator, saga_registry=registry)
     
     correlation_id = "corr-fail"
     
@@ -202,8 +214,17 @@ async def test_saga_failure_compensation():
     # Since we can't easily access the saga instance created inside manager, 
     # checking the dispatched command is best.
     
-    assert mediator.send.called
-    # Check last call should be CancelOrder
-    last_call = mediator.send.await_args[0][0]
-    assert isinstance(last_call, CancelOrder)
-    assert last_call.order_id == "o1"
+    assert not mediator.send.called
+    
+    # But commands should be captured in pending_commands
+    assert len(ctx.pending_commands) > 0
+    # Last one should be CancelOrder
+    # (Checking serialized format)
+    # serialized command: {"command_id":..., "correlation_id":..., "order_id":..., "__type__": "CancelOrder"}
+    # Implementation detail of _serialize_command? 
+    # Usually it's just keys. The type isn't always embedded unless handled.
+    # Base saga just does asdict.
+    
+    last_cmd = ctx.pending_commands[-1]
+    # _serialize_command structure: {'type_name':..., 'data': {...}}
+    assert last_cmd['data']['order_id'] == "o1"

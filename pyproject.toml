@@ -30,7 +30,7 @@ dependencies = []
 
 [project.optional-dependencies]
 pydantic = ["pydantic>=2.0"]
-sqlalchemy = ["sqlalchemy>=2.0"]
+sqlalchemy = ["sqlalchemy>=2.0", "aiosqlite>=0.17"]
 fastapi = ["fastapi>=0.100", "pydantic>=2.0"]
 django = ["django>=4.2"]
 inject = ["dependency-injector>=4.0"]
@@ -45,6 +45,7 @@ storage-s3 = ["aiobotocore>=2.5"]
 storage-dropbox = ["httpx>=0.25"]
 storage-gcs = ["gcloud-aio-storage>=8.0"]
 temporal = ["temporalio>=1.0"]
+tenacity = ["tenacity>=8.0"]
 # Development extras
 dev = [
     "pytest>=7.0",
@@ -55,7 +56,7 @@ dev = [
     "aio-pika>=8.0",
 ]
 all = [
-    "py-cqrs-ddd-toolkit[pydantic,sqlalchemy,fastapi,django,inject,redis,dramatiq,dramatiq-abort,rabbitmq,dev,opentelemetry,sentry,storage-local,storage-s3,storage-dropbox,storage-gcs,temporal]",
+    "py-cqrs-ddd-toolkit[pydantic,sqlalchemy,fastapi,django,inject,redis,dramatiq,dramatiq-abort,rabbitmq,dev,opentelemetry,sentry,storage-local,storage-s3,storage-dropbox,storage-gcs,temporal,tenacity]",
 ]
 
 [project.urls]

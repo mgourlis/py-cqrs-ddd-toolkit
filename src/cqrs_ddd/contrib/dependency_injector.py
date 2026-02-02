@@ -158,13 +158,27 @@ class Container(containers.DeclarativeContainer):
     # Sagas
     saga_registry = providers.Object(global_saga_registry)
     saga_repository = providers.Singleton("cqrs_ddd.saga.InMemorySagaRepository")
-    saga_manager = providers.Singleton(
-        "cqrs_ddd.saga.SagaManager",
+    
+    # Choreography Manager (Legacy SagaManager behavior)
+    svc_saga_choreography_manager = providers.Singleton(
+        "cqrs_ddd.saga.SagaChoreographyManager",
         repository=saga_repository,
         mediator=mediator,
         saga_registry=None,
         lock_strategy=lock_strategy
     )
+    
+    # Orchestrator Manager (Explicit Orchestration)
+    svc_saga_orchestrator_manager = providers.Singleton(
+        "cqrs_ddd.saga.SagaOrchestratorManager",
+        repository=saga_repository,
+        mediator=mediator,
+        saga_registry=None,
+        lock_strategy=lock_strategy
+    )
+
+    # Legacy alias or default implementation
+    saga_manager = svc_saga_choreography_manager
     
     # Outbox Worker (Runs in background)
     outbox_worker = providers.Singleton(

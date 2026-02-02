@@ -470,7 +470,32 @@ class SagaRepository(Protocol):
     async def load(self, saga_id: str) -> Optional[Any]:
         ...
     
-    async def find_by_correlation_id(self, correlation_id: str, saga_type: Optional[str] = None) -> Optional[Any]:
+    async def find_by_correlation_id(self, correlation_id: str, saga_type: str) -> Optional[Any]:
+        ...
+
+    async def find_stalled_sagas(self, limit: int = 10) -> List[Any]:
+        """Find sagas that are stalled (is_stalled=True)."""
+        ...
+
+    async def find_suspended_sagas(self, limit: int = 10) -> List[Any]:
+        """Find sagas that are suspended (is_suspended=True)."""
+        ...
+
+    async def find_expired_suspended_sagas(self, limit: int = 10) -> List[Any]:
+        """Find sagas that are suspended and have timed out."""
+        ...
+
+
+@runtime_checkable
+class SagaRegistry(Protocol):
+    """Protocol for saga registry."""
+    
+    def get_sagas_for_event(self, event_type: type) -> List[type]:
+        """Get all saga classes registered for an event type."""
+        ...
+    
+    def get_saga_type(self, name: str) -> Optional[type]:
+        """Get saga class by name."""
         ...
 
 

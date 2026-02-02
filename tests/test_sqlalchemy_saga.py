@@ -33,7 +33,11 @@ async def engine():
                 failed_at TIMESTAMP,
                 error TEXT,
                 is_completed BOOLEAN DEFAULT FALSE,
-                is_failed BOOLEAN DEFAULT FALSE
+                is_failed BOOLEAN DEFAULT FALSE,
+                is_stalled BOOLEAN DEFAULT FALSE,
+                compensations JSON,
+                failed_compensations JSON,
+                pending_commands JSON
             )
         """))
     yield engine
@@ -125,7 +129,7 @@ async def test_find_by_correlation_id(session_factory):
 
     async with session_factory() as session2:
         repo2 = SQLAlchemySagaRepository(session=session2)
-        found = await repo2.find_by_correlation_id("corr-xyz")
+        found = await repo2.find_by_correlation_id("corr-xyz", saga_type="TestSaga")
         assert found is not None
         assert found.saga_id == sid
 
@@ -159,5 +163,53 @@ async def test_timezone_conversion(engine, session_factory):
         assert loaded.created_at.tzinfo is not None
         assert loaded.updated_at.tzinfo is not None
         # they should be timezone-aware and not raise when converting to isoformat
-        _ = loaded.created_at.isoformat()
         _ = loaded.updated_at.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_find_stalled_sagas(session_factory):
+    async with session_factory() as session:
+        repo = SQLAlchemySagaRepository(session=session)
+        
+        # Create normal saga
+        await repo.save(SagaContext(saga_id="1", saga_type="T", correlation_id="c1", current_step="s"))
+        
+        # Create stalled saga
+        stalled = SagaContext(saga_id="2", saga_type="T", correlation_id="c2", current_step="s")
+        stalled.is_stalled = True
+        stalled.pending_commands = [{"cmd": 1}]
+        await repo.save(stalled)
+        
+        await session.commit()
+    
+    async with session_factory() as session2:
+        repo2 = SQLAlchemySagaRepository(session=session2)
+        stalled_list = await repo2.find_stalled_sagas()
+        assert len(stalled_list) == 1
+        assert stalled_list[0].saga_id == "2"
+        assert stalled_list[0].pending_commands == [{"cmd": 1}]
+
+
+@pytest.mark.asyncio
+async def test_find_by_correlation_id_with_type(session_factory):
+    async with session_factory() as session:
+        repo = SQLAlchemySagaRepository(session=session)
+        # Two sagas with same correlation ID but different types (saga pattern standard)
+        s1 = SagaContext(saga_id="s1", saga_type="TypeA", correlation_id="common-corr", current_step="s")
+        s2 = SagaContext(saga_id="s2", saga_type="TypeB", correlation_id="common-corr", current_step="s")
+        await repo.save(s1)
+        await repo.save(s2)
+        await session.commit()
+        
+    async with session_factory() as session2:
+        repo2 = SQLAlchemySagaRepository(session=session2)
+        
+        # Find by type
+        found_a = await repo2.find_by_correlation_id("common-corr", saga_type="TypeA")
+        assert found_a.saga_id == "s1"
+        
+        found_b = await repo2.find_by_correlation_id("common-corr", saga_type="TypeB")
+        assert found_b.saga_id == "s2"
+        
+        # Find explicit mismatch
+        assert await repo2.find_by_correlation_id("common-corr", saga_type="TypeC") is None

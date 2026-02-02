@@ -721,67 +721,121 @@ except DomainError as e:
 ---
 
 ## Process Management (Sagas)
-Sagas coordinate long-running distributed transactions through **Choreography**. They maintain state across multiple independent transactions, ensuring that eventual consistency is achieved even when individual steps fail.
+Sagas coordinate long-running distributed transactions through **Orchestration** or **Choreography**. They maintain state across multiple independent transactions, ensuring that eventual consistency is achieved even when individual steps fail.
 
 ### Core Components
 
 *   **`SagaContext`**: The persistent state of a saga instance. It tracks:
-    - `state`: Custom business data (e.g., `order_id`).
+    - `state`: Custom business data (dict or Pydantic model).
     - `history`: An audit trail of every event handled and command dispatched.
     - `processed_message_ids`: Ensures **Idempotency** by never processing the same event twice.
+    - `parent_saga_id`: Support for sub-sagas.
 *   **`@saga_step`**: A declarative decorator that maps Domain Events to specific handler methods.
-*   **`SagaManager`**: The orchestrator. It receives events, loads the correct `SagaContext` using the `correlation_id`, and executes the corresponding step.
-*   **`SagaRegistry`**: Automatically discovers and registers Saga classes during application startup.
+*   **`SagaManager`**: The base orchestrator. Subclasses include:
+    - **`SagaChoreographyManager`**: Reacts to domain events (`handle_event`).
+    - **`SagaOrchestratorManager`**: Explicitly starts sagas via `run()`.
+*   **`SagaRepository`**: Persists saga state (InMemory, SQLAlchemy). Protocol now enforces `saga_type` in lookups for precision.
+*   **`SagaRegistry`**: Explicitly maps Domain Events to Saga classes. Must be passed to the Manager.
+*   **`PydanticSaga`**: Type-safe saga state management using Pydantic models.
 
-### Failure Handling & Compensation
-Unlike traditional ACID transactions, Sagas use **Compensating Transactions** to undo failures. If a step fails, the `compensate()` method is triggered to reverse previous successful actions.
-
-#### Example: Order Fulfillment Saga
+### Explicit Registration (Strict DI)
+The toolkit enforces explicit Dependency Injection. You must register your Sagas manually to avoid global state side effects.
 
 ```python
-from cqrs_ddd.saga import Saga, saga_step, SagaContext
+from cqrs_ddd.saga_registry import SagaRegistry
 
-class OrderSaga(Saga):
+# 1. Configure Registry
+registry = SagaRegistry()
+registry.register(OrderCreated, OrderSaga)
+registry.register(PaymentProcessed, OrderSaga)
+
+# 2. Inject into Manager
+manager = SagaChoreographyManager(repo, mediator, saga_registry=registry)
+```
+
+### Failure Handling & Compensation
+Unlike traditional ACID transactions, Sagas use **Compensating Transactions** to undo failures.
+- **Automatic Compensation**: If a step raises an exception, `compensate()` is triggered.
+- **Stalled Recovery**: The `recover_pending_sagas` method (and `find_stalled_sagas` repository method) allows resuming sagas that crashed mid-dispatch.
+
+#### Example: Type-Safe Order Saga (Pydantic)
+
+```python
+from cqrs_ddd.contrib.pydantic import PydanticSaga, PydanticDomainEvent
+from cqrs_ddd.saga import saga_step
+from pydantic import BaseModel
+
+class OrderState(BaseModel):
+    order_id: str = ""
+    status: str = "pending"
+
+class OrderSaga(PydanticSaga[OrderState]):
+    state_model = OrderState
+    
     @saga_step(OrderCreated)
     async def on_order_created(self, event: OrderCreated):
-        """Step 1: Save state and start payment."""
-        self.context.state["order_id"] = event.order_id
-        self.context.state["customer_id"] = event.customer_id
-        
-        # Commands are queued and dispatched after the step succeeds
-        self.dispatch_command(ProcessPayment(
-            order_id=event.order_id,
-            amount=event.total
-        ))
+        """Step 1: Init state and trigger payment."""
+        self.state.order_id = event.order_id
+        self.dispatch_command(ProcessPayment(amount=event.total))
 
     @saga_step(PaymentProcessed)
-    async def on_payment_processed(self, event: PaymentProcessed):
-        """Step 2: Payment success, trigger shipping."""
-        self.dispatch_command(ShipOrder(
-            order_id=self.context.state["order_id"]
-        ))
-        
-    @saga_step(OrderShipped)
-    async def on_order_shipped(self, event: OrderShipped):
-        """Step 3: Process finished."""
-        self.complete()
+    async def on_payment(self, event: PaymentProcessed):
+        """Step 2: Complete or Comp."""
+        if event.success:
+            self.state.status = "paid"
+            self.dispatch_command(ShipOrder(order_id=self.state.order_id))
+            self.complete()
+        else:
+            raise ValueError("Payment Failed") # Triggers compensate()
 
     async def compensate(self):
-        """Rollback: If anything fails, cancel the order."""
-        order_id = self.context.state.get("order_id")
-        if order_id:
-            self.dispatch_command(CancelOrder(
-                order_id=order_id,
-                reason=self.context.error or "Saga Failure"
-            ))
+        """Rollback: Cancel order."""
+        self.dispatch_command(CancelOrder(order_id=self.state.order_id))
+
+```
+
+### Human-in-the-Loop (HitL) & Timeouts
+Sagas can pause execution ("suspend") to wait for external signals, such as manual user approval or 3rd party webhooks.
+
+*   `suspend(reason: str, timeout: timedelta)`: Marks saga as suspended. It will not be flagged as "stalled".
+*   `resume()`: Clears the suspension. Must be called explicitly in the handler that receives the unblocking event.
+*   `on_timeout()`: Hook called if the saga remains suspended past its timeout. Defaults to failing the saga.
+
+```python
+    @saga_step(LargeOrderPlaced)
+    async def on_large_order(self, event):
+        # Wait up to 24 hours for a manager to approve
+        self.suspend("Waiting for Manager Approval", timeout=timedelta(hours=24))
+
+    @saga_step(OrderApproved)
+    async def on_approval(self, event):
+        self.resume() # Clear suspension
+        self.dispatch_command(ShipOrder(...))
+```
+
+#### Timeout Processing
+To handle expired suspensions, run the maintenance task periodically:
+```python
+# Finds expired sagas, loads them, and calls on_timeout()
+await saga_manager.process_timeouts()
 ```
 
 ### Orchestration Lifecycle
-1.  **Event Received**: `SagaManager` checks if any Saga is interested in the event.
-2.  **Instance Matching**: Uses the `correlation_id` (e.g., `order_id`) to find an existing instance or create a new one.
-3.  **Concurrency Locking**: Uses a `LockStrategy` (e.g., Redis/SQL lock) to ensure the same instance isn't processed by two workers simultaneously.
-4.  **Execution**: The step runs, state is updated, and new commands are queued.
-5.  **Persistence**: The `SagaContext` is saved to a `SagaRepository`.
+1.  **Start**: `SagaOrchestratorManager.run(SagaClass, initial_data)` or `SagaChoreographyManager.handle_event(event)`.
+2.  **Concurrency**: Uses a `LockStrategy` (Redis/SQL) to serialize access to the same saga instance.
+3.  **Step Execution**: State is active. Modifying `self.context.state` (or `self.state` in Pydantic) updates the dirty state.
+4.  **Persistence**: `SagaRepository.save()` persists the context.
+5.  **Dispatch**: Commands in `pending_commands` are dispatched via `Mediator`. If dispatch fails, they remain pending for recovery.
+
+### Repository & Protocol
+The `SagaRepository` protocol ensures strict typing:
+```python
+# Unambiguous Lookup
+context = await repo.find_by_correlation_id(correlation_id="123", saga_type="OrderSaga")
+
+# Crash Recovery
+stalled = await repo.find_stalled_sagas()
+```
 
 ---
 

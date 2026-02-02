@@ -20,7 +20,17 @@ class SagaRegistry:
         if cls._instance is None:
             cls._instance = super(SagaRegistry, cls).__new__(cls)
             cls._instance._event_map = {}
+            cls._instance._type_map = {}
         return cls._instance
+    
+    def register_type(self, saga_class: Type):
+        """Register a saga class by name."""
+        self._type_map[saga_class.__name__] = saga_class
+        logger.debug(f"Registered Saga type {saga_class.__name__}")
+
+    def get_saga_type(self, name: str) -> Optional[Type]:
+        """Get saga class by name."""
+        return self._type_map.get(name)
     
     def register(self, event_type: Type, saga_class: Type):
         """
@@ -43,7 +53,10 @@ class SagaRegistry:
     
     def clear(self):
         """Clear all registrations."""
+    def clear(self):
+        """Clear all registrations."""
         self._event_map = {}
+        self._type_map = {}
 
 # Global instance
 saga_registry = SagaRegistry()

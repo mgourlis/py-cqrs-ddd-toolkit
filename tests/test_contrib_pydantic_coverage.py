@@ -98,42 +98,44 @@ def test_pydantic_domain_event_base_coverage():
 
 @pytest.mark.skipif(not HAS_PYDANTIC, reason="Pydantic not installed")
 @pytest.mark.asyncio
-async def test_pydantic_saga_sync_edge_cases():
-    """Cover PydanticSaga state synchronization branches."""
+async def test_pydantic_saga_sync_coverage():
+    """Cover PydanticSaga._sync_state."""
     class SState(BaseModel):
         count: int = 0
     
-    class StepEvent: pass
-    
     class MyPSaga(PydanticSaga[SState]):
         state_model = SState
-        async def compensate(self): pass
     
     ctx = MagicMock()
-    ctx.state = {"count": 1}
+    # Setup state as a real dict for init, but mock methods for sync check
+    # Actually PydanticSaga._load_state reads ctx.state.
+    # If we want to check .update() call, we need to wrap the dict or check side effect.
+    real_dict = {"count": 1}
+    ctx.state = real_dict
+    
     saga = MyPSaga(ctx, mediator=MagicMock())
     
-    # Access state (initializes _typed_state)
+    # 1. State loaded
     assert saga.state.count == 1
     
-    # Modify state and handle event (triggers sync in finally)
+    # 2. Modify state
     saga.state.count = 2
     
-    # We call handle_event which calls super().handle_event and then finally syncs
-    with patch("cqrs_ddd.saga.Saga.handle_event", AsyncMock()):
-        await saga.handle_event(StepEvent())
-        
+    # 3. Serialize/Sync
+    saga._sync_state()
+    
+    # Verify context state updated in place
     assert ctx.state["count"] == 2
-    
-    # 2. AttributeError path (v1 style fallback)
-    class V1State:
-        def dict(self): return {"count": 3}
-        # missing model_dump
-    
-    saga._typed_state = V1State()
-    with patch("cqrs_ddd.saga.Saga.handle_event", AsyncMock()):
-        await saga.handle_event(StepEvent())
-    assert ctx.state["count"] == 3
+    # Verify reference preserved (if using update)
+    assert ctx.state is real_dict
+
+    # 4. Fallback branch (non-BaseModel state)
+    saga._state = {"count": 3} # Force dict state
+    saga._sync_state()
+    # Base Saga._sync_state assigns context.state = _state
+    assert ctx.state == {"count": 3}
+    # Reference might change here, which is fine for base behavior
+
 
 @pytest.mark.skipif(not HAS_PYDANTIC, reason="Pydantic not installed")
 def test_result_models_coverage():

@@ -156,6 +156,9 @@ async def test_pydantic_saga():
     # Verify handler ran
     assert saga.state.count == 11
     
+    # Sync state manually for unit test
+    saga._sync_state()
+    
     # Verify state update synced to context
     assert saga.context.state["count"] == 11
     assert state_dict["count"] == 11
