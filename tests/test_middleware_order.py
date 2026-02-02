@@ -105,8 +105,10 @@ async def test_middleware_execution_order_with_registry():
 
     # Register them dynamically in the registry for this test
     # (Mocking the registry behavior)
-    with patch(
-        "cqrs_ddd.middleware.MiddlewareRegistry.log",
+    from cqrs_ddd.middleware import MiddlewareRegistry
+    with patch.object(
+        MiddlewareRegistry,
+        "log",
         side_effect=lambda: lambda cls: cls,
     ):  # just bypass
         # We'll manually construct the _middlewares list to see what mediator does

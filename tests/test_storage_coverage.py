@@ -92,11 +92,8 @@ async def test_local_storage_comprehensive(monkeypatch):
 async def test_s3_storage_comprehensive():
     mock_session = MagicMock()
     mock_client = MagicMock()
-
-    class MockEx:
-        ClientError = S3ClientError
-
-    mock_client.exceptions = MockEx()
+    mock_client.exceptions = MagicMock()
+    mock_client.exceptions.ClientError = S3ClientError
 
     mock_client.head_object = AsyncMock(
         side_effect=[S3ClientError("404"), S3ClientError("500"), {}]

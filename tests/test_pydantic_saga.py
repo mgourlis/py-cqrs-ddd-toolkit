@@ -30,7 +30,7 @@ if HAS_PYDANTIC:
         order_id: str = ""
         success: bool = True
 
-    class TestOrderSaga(PydanticSaga[OrderState]):
+    class OrderSaga(PydanticSaga[OrderState]):
         state_model = OrderState
 
         @saga_step(PaymentProcessed)
@@ -53,11 +53,11 @@ async def test_pydantic_saga_start_persistence():
 
     # 1. Start (Orchestration style mocked manually)
     await manager._process_saga(
-        TestOrderSaga, correlation_id, input_data=initial_state
+        OrderSaga, correlation_id, input_data=initial_state
     )
 
     # 2. Verify Persistence
-    ctx = await repo.find_by_correlation_id(correlation_id, "TestOrderSaga")
+    ctx = await repo.find_by_correlation_id(correlation_id, "OrderSaga")
     assert ctx is not None
     assert ctx.state["order_id"] == "123"
     assert ctx.state["amount"] == 99.9
@@ -76,7 +76,7 @@ async def test_pydantic_saga_event_handling():
     # 1. Setup existing saga
     ctx = SagaContext(
         saga_id="saga-1",
-        saga_type="TestOrderSaga",
+        saga_type="OrderSaga",
         correlation_id="corr-2",
         current_step="started",
         state={"order_id": "123", "status": "created", "amount": 50.0},
@@ -89,7 +89,7 @@ async def test_pydantic_saga_event_handling():
     # Register manually to ensure manager finds it
     from cqrs_ddd.saga_registry import saga_registry
 
-    saga_registry.register(PaymentProcessed, TestOrderSaga)
+    saga_registry.register(PaymentProcessed, OrderSaga)
 
     await manager.handle_event(event)
 
@@ -107,7 +107,7 @@ async def test_pydantic_saga_load_state_validation():
     # Corrupt state (wrong type)
     ctx = SagaContext(
         saga_id="saga-bad",
-        saga_type="TestOrderSaga",
+        saga_type="OrderSaga",
         correlation_id="corr-bad",
         current_step="started",
         state={"order_id": "123", "amount": "NOT_A_FLOAT"},
@@ -121,7 +121,7 @@ async def test_pydantic_saga_load_state_validation():
 
     from cqrs_ddd.saga_registry import saga_registry
 
-    saga_registry.register(PaymentProcessed, TestOrderSaga)
+    saga_registry.register(PaymentProcessed, OrderSaga)
 
     # Should fail during _load_state raising ValueError
     with pytest.raises(ValueError, match="Saga State Corruption"):
