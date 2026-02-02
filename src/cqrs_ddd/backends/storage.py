@@ -3,7 +3,7 @@
 import os
 import asyncio
 import uuid
-from typing import Optional, List
+from typing import Optional, List, Any
 from ..protocols import StorageService
 
 try:
@@ -136,10 +136,11 @@ class S3Storage(StorageService):
     def __init__(
         self,
         bucket: str,
-        aws_access_key_id: str = None,
-        aws_secret_access_key: str = None,
-        region_name: str = None,
-        endpoint_url: str = None,
+        aws_access_key_id: Optional[str] = None,
+        aws_secret_access_key: Optional[str] = None,
+        region_name: Optional[str] = None,
+        endpoint_url: Optional[str] = None,
+        session: Any = None,
     ):
         try:
             from aiobotocore.session import get_session
@@ -149,7 +150,7 @@ class S3Storage(StorageService):
             )
 
         self.bucket = bucket
-        self.session = get_session()
+        self.session = session or get_session()
         self.config = {
             "aws_access_key_id": aws_access_key_id,
             "aws_secret_access_key": aws_secret_access_key,
@@ -163,8 +164,15 @@ class S3Storage(StorageService):
                 try:
                     await client.head_object(Bucket=self.bucket, Key=path)
                     raise FileExistsError(f"File exists: {path}")
-                except client.exceptions.ClientError as e:
-                    if e.response["Error"]["Code"] != "404":
+                except Exception as e:
+                    if isinstance(e, FileExistsError):
+                        raise
+                    # Robust check for 404
+                    err_resp = getattr(e, "response", {})
+                    code = err_resp.get("Error", {}).get("Code")
+                    if code == "404" or "404" in str(e):
+                        pass
+                    else:
                         raise
 
             await client.put_object(Bucket=self.bucket, Key=path, Body=content)
@@ -175,8 +183,10 @@ class S3Storage(StorageService):
                 response = await client.get_object(Bucket=self.bucket, Key=path)
                 async with response["Body"] as stream:
                     return await stream.read()
-            except client.exceptions.ClientError as e:
-                if e.response["Error"]["Code"] == "NoSuchKey":
+            except Exception as e:
+                err_resp = getattr(e, "response", {})
+                code = err_resp.get("Error", {}).get("Code")
+                if code == "NoSuchKey" or "NoSuchKey" in str(e):
                     return None
                 raise
 
@@ -189,8 +199,10 @@ class S3Storage(StorageService):
             try:
                 await client.head_object(Bucket=self.bucket, Key=path)
                 return True
-            except client.exceptions.ClientError as e:
-                if e.response["Error"]["Code"] == "404":
+            except Exception as e:
+                err_resp = getattr(e, "response", {})
+                code = err_resp.get("Error", {}).get("Code")
+                if code == "404" or "404" in str(e):
                     return False
                 raise
 

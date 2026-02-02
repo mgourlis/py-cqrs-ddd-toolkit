@@ -92,39 +92,35 @@ async def test_local_storage_comprehensive(monkeypatch):
 async def test_s3_storage_comprehensive():
     mock_session = MagicMock()
     mock_client = MagicMock()
-    class S3Exceptions:
-        ClientError = S3ClientError
-    mock_client.exceptions = S3Exceptions
-
+    
     mock_client.head_object = AsyncMock(
         side_effect=[S3ClientError("404"), S3ClientError("500"), {}]
     )
     mock_client.put_object = AsyncMock()
     mock_client.delete_object = AsyncMock()
-
+    
     m_stream = AsyncMock()
     m_stream.read.return_value = b"hi"
     mock_client.get_object = AsyncMock(return_value={"Body": AsyncCM(m_stream)})
-
+    
     mock_paginator = MagicMock()
     mock_paginator.paginate.return_value = AIter([{"Contents": [{"Key": "/f1"}]}])
     mock_client.get_paginator.return_value = mock_paginator
-
+    
     mock_session.create_client.return_value = AsyncCM(mock_client)
 
-    with patch("aiobotocore.session.get_session", return_value=mock_session):
-        storage = S3Storage("b")
-        await storage.save("f1", b"d")
-        with pytest.raises(S3ClientError):
-            await storage.save("f2", b"d")
-        assert await storage.exists("f1") is True
+    storage = S3Storage("b", session=mock_session)
+    await storage.save("f1", b"d")
+    with pytest.raises(S3ClientError):
+        await storage.save("f2", b"d")
+    assert await storage.exists("f1") is True
 
-        # read NoSuchKey
-        mock_client.get_object.side_effect = S3ClientError("NoSuchKey")
-        assert await storage.read("nx") is None
+    # read NoSuchKey
+    mock_client.get_object.side_effect = S3ClientError("NoSuchKey")
+    assert await storage.read("nx") is None
 
-        await storage.delete("f1")
-        assert await storage.list("/") == ["/f1"]
+    await storage.delete("f1")
+    assert await storage.list("/") == ["/f1"]
 
 
 # --- DropboxStorage Tests ---
