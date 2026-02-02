@@ -1,6 +1,7 @@
 """Caching decorators and utilities."""
+
 from functools import wraps
-from typing import Callable, Any, Optional
+from typing import Callable, Optional
 import hashlib
 import logging
 
@@ -31,34 +32,36 @@ def _resolve_cache_service(provider=None) -> Optional[CacheService]:
 # Function Decorators (General Purpose)
 # =============================================================================
 
+
 def cached(
-    ttl: int = 60, 
+    ttl: int = 60,
     key_builder: Callable = _default_key_builder,
-    cache_service_provider: Callable[[], CacheService] = None
+    cache_service_provider: Callable[[], CacheService] = None,
 ):
     """
     Decorator to cache method execution results using a pluggable cache service.
-    
-    If the cache service is unavailable or raises errors, the decorator fails gracefully 
+
+    If the cache service is unavailable or raises errors, the decorator fails gracefully
     and executes the decorated function as normal.
-    
+
     Args:
         ttl: Time-to-live in seconds.
         key_builder: Function to generate cache key from arguments.
         cache_service_provider: Callable returning a CacheService instance.
-    
+
     Usage:
         @cached(ttl=300)
         async def get_user_profile(user_id: int):
             ...
     """
+
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
             service = _resolve_cache_service(cache_service_provider)
             if not service:
                 return await func(*args, **kwargs)
-            
+
             try:
                 key = key_builder(func, *args, **kwargs)
                 val = await service.get(key)
@@ -66,34 +69,37 @@ def cached(
                     return val
             except Exception:
                 pass
-            
+
             result = await func(*args, **kwargs)
-            
+
             try:
                 await service.set(key, result, ttl=ttl)
             except Exception:
                 pass
             return result
+
         return wrapper
+
     return decorator
 
 
 def cache_invalidate(
     key_builder: Callable = None,
-    cache_service_provider: Callable[[], CacheService] = None
+    cache_service_provider: Callable[[], CacheService] = None,
 ):
     """
     Decorator to invalidate a specific cache key after successful execution.
-    
+
     Args:
         key_builder: Function to generate the cache key to delete.
         cache_service_provider: Callable returning a CacheService instance.
-        
+
     Usage:
         @cache_invalidate(key_builder=lambda f, uid, **kw: f"user:{uid}")
         async def update_user(user_id: int, data: dict):
             ...
     """
+
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -105,5 +111,7 @@ def cache_invalidate(
                 except Exception:
                     pass
             return result
+
         return wrapper
+
     return decorator

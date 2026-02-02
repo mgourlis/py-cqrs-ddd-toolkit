@@ -13,12 +13,14 @@ from cqrs_ddd.outbox import OutboxMessage
 @pytest.fixture
 async def engine():
     import sqlite3
+
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
-        connect_args={"detect_types": sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES}
+        connect_args={"detect_types": sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES},
     )
     async with engine.begin() as conn:
-        await conn.execute(text("""
+        await conn.execute(
+            text("""
             CREATE TABLE outbox_messages (
                 id VARCHAR(36) PRIMARY KEY,
                 occurred_at TIMESTAMP NOT NULL,
@@ -32,7 +34,8 @@ async def engine():
                 processed_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """))
+        """)
+        )
     yield engine
     await engine.dispose()
 
@@ -57,7 +60,7 @@ async def test_save_and_get_pending(uow_factory):
         type="event",
         topic="t1",
         payload={"k": "v"},
-        correlation_id="corr-1"
+        correlation_id="corr-1",
     )
 
     await storage.save(msg)
@@ -79,7 +82,7 @@ async def test_mark_published_and_mark_failed(uow_factory):
         type="event",
         topic="t2",
         payload={"x": 1},
-        correlation_id=None
+        correlation_id=None,
     )
 
     await storage.save(msg)

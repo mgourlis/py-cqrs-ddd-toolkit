@@ -1,19 +1,21 @@
 """Exceptions for CQRS/DDD toolkit."""
+
 from typing import Dict, Any, List
 
 
 class CQRSDDDError(Exception):
     """Base exception for all CQRS/DDD toolkit errors."""
+
     pass
 
 
 class ValidationError(CQRSDDDError):
     """Raised when command/query validation fails."""
-    
+
     def __init__(self, message_type: str, errors: Dict[str, List[str]]):
         """
         Initialize validation error.
-        
+
         Args:
             message_type: The type of message (Command/Query/Event) that failed.
             errors: Dictionary of validation errors {field: [messages]}.
@@ -21,7 +23,7 @@ class ValidationError(CQRSDDDError):
         self.message_type = message_type
         self.errors = errors
         super().__init__(f"Validation failed for {message_type}: {errors}")
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API responses."""
         return {
@@ -33,11 +35,11 @@ class ValidationError(CQRSDDDError):
 
 class EntityNotFoundError(CQRSDDDError):
     """Raised when an entity is not found."""
-    
+
     def __init__(self, entity_type: str, entity_id: Any):
         """
         Initialize entity not found error.
-        
+
         Args:
             entity_type: The name/type of the entity.
             entity_id: The ID of the requested entity.
@@ -49,7 +51,7 @@ class EntityNotFoundError(CQRSDDDError):
 
 class HandlerNotFoundError(CQRSDDDError):
     """Raised when no handler is registered for a message type."""
-    
+
     def __init__(self, message_type: type):
         self.message_type = message_type
         super().__init__(f"No handler registered for {message_type.__name__}")
@@ -57,7 +59,7 @@ class HandlerNotFoundError(CQRSDDDError):
 
 class DomainError(CQRSDDDError):
     """Raised when a domain rule is violated."""
-    
+
     def __init__(self, code: str, message: str):
         self.code = code
         self.message = message
@@ -66,7 +68,7 @@ class DomainError(CQRSDDDError):
 
 class InfrastructureError(CQRSDDDError):
     """Raised when an infrastructure operation fails."""
-    
+
     def __init__(self, code: str, message: str, original_error: Exception = None):
         self.code = code
         self.message = message
@@ -76,14 +78,14 @@ class InfrastructureError(CQRSDDDError):
 
 class AuthorizationError(CQRSDDDError):
     """Raised when permission check fails."""
-    
+
     def __init__(self, message: str = "Access denied"):
         super().__init__(message)
 
 
 class ConcurrencyError(CQRSDDDError):
     """Raised when optimistic concurrency check fails."""
-    
+
     def __init__(self, expected: int, actual: int):
         self.expected = expected
         self.actual = actual

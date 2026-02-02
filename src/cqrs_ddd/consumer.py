@@ -1,7 +1,7 @@
 """Base Event Consumer implementation."""
+
 import logging
-import asyncio
-from typing import List, Optional, Any, Callable
+from typing import List, Optional, Any
 
 from .protocols import MessageConsumer, EventDispatcher, EventConsumer
 from .event_registry import EventTypeRegistry
@@ -12,7 +12,7 @@ logger = logging.getLogger("cqrs_ddd")
 class BaseEventConsumer(EventConsumer):
     """
     Base implementation of an EventConsumer.
-    
+
     Subscribes to one or more topics on a MessageBroker.
     When a message is received:
     1. Hydrates the payload using EventTypeRegistry
@@ -24,11 +24,11 @@ class BaseEventConsumer(EventConsumer):
         broker: MessageConsumer,
         dispatcher: EventDispatcher,
         topics: List[str],
-        queue_name: Optional[str] = None
+        queue_name: Optional[str] = None,
     ):
         """
         Initialize the consumer.
-        
+
         Args:
             broker: The message broker to subscribe to
             dispatcher: The event dispatcher to send hydrated events to
@@ -48,14 +48,12 @@ class BaseEventConsumer(EventConsumer):
 
         self._running = True
         logger.info(f"Starting EventConsumer for topics: {self.topics}")
-        
+
         for topic in self.topics:
             await self.broker.subscribe(
-                topic=topic,
-                handler=self._handle_message,
-                queue_name=self.queue_name
+                topic=topic, handler=self._handle_message, queue_name=self.queue_name
             )
-        
+
         logger.info("EventConsumer started and subscribed to all topics")
 
     async def stop(self) -> None:
@@ -66,7 +64,7 @@ class BaseEventConsumer(EventConsumer):
     async def _handle_message(self, payload: Any) -> None:
         """
         Internal handler for messages from the broker.
-        
+
         Payload is expected to be a dict with 'event_type' and properties.
         """
         if not isinstance(payload, dict):
@@ -81,14 +79,19 @@ class BaseEventConsumer(EventConsumer):
         try:
             # Hydrate event
             event = EventTypeRegistry.hydrate_dict(event_type, payload)
-            
+
             if not event:
-                logger.warning(f"Failed to hydrate event of type '{event_type}'. Is it registered?")
+                logger.warning(
+                    f"Failed to hydrate event of type '{event_type}'. Is it registered?"
+                )
                 return
 
             # Dispatch locally
             logger.debug(f"Consumer hydrated and dispatching {event_type}")
             await self.dispatcher.dispatch_background(event)
-            
+
         except Exception as e:
-            logger.error(f"Error in EventConsumer while processing {event_type}: {e}", exc_info=True)
+            logger.error(
+                f"Error in EventConsumer while processing {event_type}: {e}",
+                exc_info=True,
+            )

@@ -1,8 +1,5 @@
 import sys
 import importlib
-import os
-from types import ModuleType
-import pkgutil
 
 import pytest
 
@@ -18,6 +15,7 @@ def test_scan_packages_nonexistent_package_logs_error(caplog):
 
 def test_scan_packages_with_module_without_path_skips(caplog):
     import math
+
     caplog.clear()
     caplog.set_level("DEBUG")
     # math has no __path__, scan_packages should simply skip it without error
@@ -47,14 +45,23 @@ async def test_scan_packages_scans_submodules(tmp_path, caplog):
     try:
         # import package to ensure it's a module object
         import tmp_pkg_scan as mod  # noqa: F401
+
         importlib.invalidate_caches()
 
         # Run scan
         scan_packages(["tmp_pkg_scan"])
 
         # We expect good module scanned and bad module logged as error
-        assert any("tmp_pkg_scan.good" in rec.message for rec in caplog.records if rec.levelname == "DEBUG")
-        assert any("Failed to import module 'tmp_pkg_scan.bad'" in rec.message for rec in caplog.records if rec.levelname == "ERROR")
+        assert any(
+            "tmp_pkg_scan.good" in rec.message
+            for rec in caplog.records
+            if rec.levelname == "DEBUG"
+        )
+        assert any(
+            "Failed to import module 'tmp_pkg_scan.bad'" in rec.message
+            for rec in caplog.records
+            if rec.levelname == "ERROR"
+        )
 
     finally:
         # Cleanup sys.path and modules

@@ -1,7 +1,5 @@
 import pytest
 import uuid
-from datetime import datetime
-from typing import Any
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import text
@@ -13,12 +11,14 @@ from cqrs_ddd.saga import SagaContext
 @pytest.fixture
 async def engine():
     import sqlite3
+
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
-        connect_args={"detect_types": sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES}
+        connect_args={"detect_types": sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES},
     )
     async with engine.begin() as conn:
-        await conn.execute(text("""
+        await conn.execute(
+            text("""
             CREATE TABLE sagas (
                 saga_id VARCHAR(64) PRIMARY KEY,
                 saga_type VARCHAR(128),
@@ -39,7 +39,8 @@ async def engine():
                 failed_compensations JSON,
                 pending_commands JSON
             )
-        """))
+        """)
+        )
     yield engine
     await engine.dispose()
 
@@ -61,7 +62,7 @@ async def test_save_and_load_insert(session_factory):
             current_step="step1",
             state={"k": "v"},
             history=[{"a": 1}],
-            processed_message_ids=["m1"]
+            processed_message_ids=["m1"],
         )
         await repo.save(ctx)
         # commit to make visible to other sessions
@@ -151,14 +152,14 @@ async def test_timezone_conversion(engine, session_factory):
                 "state": '{"x":1}',
                 "history": '[{"h":1}]',
                 "processed_message_ids": '["m"]',
-                "created_at": '2020-01-01 00:00:00',
-                "updated_at": '2020-01-02 00:00:00'
-            }
+                "created_at": "2020-01-01 00:00:00",
+                "updated_at": "2020-01-02 00:00:00",
+            },
         )
 
     async with session_factory() as session:
         repo = SQLAlchemySagaRepository(session=session)
-        loaded = await repo.load('tz-saga')
+        loaded = await repo.load("tz-saga")
         assert loaded is not None
         assert loaded.created_at.tzinfo is not None
         assert loaded.updated_at.tzinfo is not None
@@ -170,18 +171,24 @@ async def test_timezone_conversion(engine, session_factory):
 async def test_find_stalled_sagas(session_factory):
     async with session_factory() as session:
         repo = SQLAlchemySagaRepository(session=session)
-        
+
         # Create normal saga
-        await repo.save(SagaContext(saga_id="1", saga_type="T", correlation_id="c1", current_step="s"))
-        
+        await repo.save(
+            SagaContext(
+                saga_id="1", saga_type="T", correlation_id="c1", current_step="s"
+            )
+        )
+
         # Create stalled saga
-        stalled = SagaContext(saga_id="2", saga_type="T", correlation_id="c2", current_step="s")
+        stalled = SagaContext(
+            saga_id="2", saga_type="T", correlation_id="c2", current_step="s"
+        )
         stalled.is_stalled = True
         stalled.pending_commands = [{"cmd": 1}]
         await repo.save(stalled)
-        
+
         await session.commit()
-    
+
     async with session_factory() as session2:
         repo2 = SQLAlchemySagaRepository(session=session2)
         stalled_list = await repo2.find_stalled_sagas()
@@ -195,21 +202,33 @@ async def test_find_by_correlation_id_with_type(session_factory):
     async with session_factory() as session:
         repo = SQLAlchemySagaRepository(session=session)
         # Two sagas with same correlation ID but different types (saga pattern standard)
-        s1 = SagaContext(saga_id="s1", saga_type="TypeA", correlation_id="common-corr", current_step="s")
-        s2 = SagaContext(saga_id="s2", saga_type="TypeB", correlation_id="common-corr", current_step="s")
+        s1 = SagaContext(
+            saga_id="s1",
+            saga_type="TypeA",
+            correlation_id="common-corr",
+            current_step="s",
+        )
+        s2 = SagaContext(
+            saga_id="s2",
+            saga_type="TypeB",
+            correlation_id="common-corr",
+            current_step="s",
+        )
         await repo.save(s1)
         await repo.save(s2)
         await session.commit()
-        
+
     async with session_factory() as session2:
         repo2 = SQLAlchemySagaRepository(session=session2)
-        
+
         # Find by type
         found_a = await repo2.find_by_correlation_id("common-corr", saga_type="TypeA")
         assert found_a.saga_id == "s1"
-        
+
         found_b = await repo2.find_by_correlation_id("common-corr", saga_type="TypeB")
         assert found_b.saga_id == "s2"
-        
+
         # Find explicit mismatch
-        assert await repo2.find_by_correlation_id("common-corr", saga_type="TypeC") is None
+        assert (
+            await repo2.find_by_correlation_id("common-corr", saga_type="TypeC") is None
+        )

@@ -1,20 +1,18 @@
-
-import json
-from typing import Any, Dict, List, Optional
-from datetime import datetime, timezone
+from typing import List, Optional
+from datetime import timezone
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.dialects.postgresql import JSONB
 
 from ..saga import SagaContext, SagaRepository
 
+
 class SQLAlchemySagaRepository(SagaRepository):
     """SQLAlchemy implementation of SagaRepository for persistent storage."""
-    
+
     def __init__(self, session: AsyncSession, table_name: str = "sagas"):
         self.session = session
         self.metadata = sa.MetaData()
-        
+
         # Define table schema
         self.table = sa.Table(
             table_name,
@@ -61,12 +59,14 @@ class SQLAlchemySagaRepository(SagaRepository):
             "failed_compensations": context.failed_compensations,
             "pending_commands": context.pending_commands,
         }
-        
+
         # Upsert logic (simplistic for generic sqlalchemy, specific dialects could use merge/upsert)
-        stmt = sa.select(self.table.c.saga_id).where(self.table.c.saga_id == context.saga_id)
+        stmt = sa.select(self.table.c.saga_id).where(
+            self.table.c.saga_id == context.saga_id
+        )
         result = await self.session.execute(stmt)
         exists = result.scalar() is not None
-        
+
         if exists:
             update_stmt = (
                 sa.update(self.table)
@@ -87,11 +87,13 @@ class SQLAlchemySagaRepository(SagaRepository):
             return None
         return self._map_to_context(row)
 
-    async def find_by_correlation_id(self, correlation_id: str, saga_type: str) -> Optional[SagaContext]:
+    async def find_by_correlation_id(
+        self, correlation_id: str, saga_type: str
+    ) -> Optional[SagaContext]:
         """Find saga context by correlation ID and type."""
         query = sa.select(self.table).where(
             self.table.c.correlation_id == correlation_id,
-            self.table.c.saga_type == saga_type
+            self.table.c.saga_type == saga_type,
         )
         result = await self.session.execute(query)
         row = result.first()
@@ -102,9 +104,7 @@ class SQLAlchemySagaRepository(SagaRepository):
     async def find_stalled_sagas(self, limit: int = 10) -> List[SagaContext]:
         """Find sagas that are stalled."""
         query = (
-            sa.select(self.table)
-            .where(self.table.c.is_stalled == True)
-            .limit(limit)
+            sa.select(self.table).where(self.table.c.is_stalled).limit(limit)
         )
         result = await self.session.execute(query)
         rows = result.all()
@@ -113,18 +113,25 @@ class SQLAlchemySagaRepository(SagaRepository):
     def _map_to_context(self, row) -> SagaContext:
         # Convert row to dict
         data = dict(row._mapping)
-        
+
         # Handle timezone conversion if necessary
         for col in ["created_at", "updated_at", "completed_at", "failed_at"]:
             if data.get(col) and data[col].tzinfo is None:
                 data[col] = data[col].replace(tzinfo=timezone.utc)
-                
+
         # Ensure new fields are present if not in DB (for migration compatibility)
-        for field in ["compensations", "failed_compensations", "pending_commands", "processed_message_ids", "history", "state"]:
+        for field in [
+            "compensations",
+            "failed_compensations",
+            "pending_commands",
+            "processed_message_ids",
+            "history",
+            "state",
+        ]:
             if data.get(field) is None:
-                if field == "state": 
+                if field == "state":
                     data[field] = {}
-                else: 
+                else:
                     data[field] = []
 
         return SagaContext(**data)

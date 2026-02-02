@@ -38,6 +38,7 @@ A framework-agnostic Python library for building CQRS and DDD applications.
 - `backends.redis_cache` - Redis caching
 - `backends.memory_cache` - In-memory cache (testing)
 """
+
 from .core import (
     Command,
     Query,
@@ -51,7 +52,7 @@ from .mediator import Mediator
 from .dispatcher import EventDispatcher
 
 from .middleware import (
-    Middleware, 
+    Middleware,
     middleware,
     ValidatorMiddleware,
     AuthorizationMiddleware,
@@ -79,7 +80,6 @@ from .persistence_dispatcher import (
 from .protocols import UnitOfWork, CacheService, LockStrategy
 from .domain_event import (
     DomainEventBase,
-
     generate_event_id,
     generate_correlation_id,
 )
@@ -104,7 +104,7 @@ __version__ = "0.1.0"
 __all__ = [
     # Core CQRS
     "Command",
-    "Query", 
+    "Query",
     "CommandHandler",
     "QueryHandler",
     "EventHandler",
@@ -112,7 +112,6 @@ __all__ = [
     "QueryResponse",
     "Mediator",
     "EventDispatcher",
-
     # Middleware
     "Middleware",
     "middleware",
@@ -148,7 +147,6 @@ __all__ = [
     "LockStrategy",
     # Event Store
     "DomainEventBase",
-
     "StoredEvent",
     "EventStore",
     "UndoExecutor",
@@ -162,5 +160,4 @@ __all__ = [
     "generate_event_id",
     "generate_correlation_id",
     "EventTypeRegistry",
-    
 ]

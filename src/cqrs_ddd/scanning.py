@@ -6,6 +6,7 @@ Useful for triggering side-effects like:
 - Persistence registration
 - SQLAlchemy model discovery
 """
+
 import pkgutil
 import importlib
 import logging
@@ -14,10 +15,11 @@ from types import ModuleType
 
 logger = logging.getLogger(__name__)
 
+
 def scan_packages(packages: List[Union[str, ModuleType]]) -> None:
     """
     Recursively scan and import all modules in the given packages.
-    
+
     Args:
         packages: List of package names (str) or module objects to scan.
     """
@@ -30,13 +32,15 @@ def scan_packages(packages: List[Union[str, ModuleType]]) -> None:
                 continue
         else:
             package_module = package
-            
+
         if not hasattr(package_module, "__path__"):
-             # It's a module, not a package, nothing to scan inside
-             continue
-             
+            # It's a module, not a package, nothing to scan inside
+            continue
+
         # Scan submodules
-        for module_info in pkgutil.walk_packages(package_module.__path__, package_module.__name__ + "."):
+        for module_info in pkgutil.walk_packages(
+            package_module.__path__, package_module.__name__ + "."
+        ):
             try:
                 importlib.import_module(module_info.name)
                 logger.debug(f"Scanned module: {module_info.name}")

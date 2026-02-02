@@ -13,12 +13,14 @@ from cqrs_ddd.outbox import OutboxMessage, OutboxService
 @pytest.fixture
 async def engine():
     import sqlite3
+
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
-        connect_args={"detect_types": sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES}
+        connect_args={"detect_types": sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES},
     )
     async with engine.begin() as conn:
-        await conn.execute(text("""
+        await conn.execute(
+            text("""
             CREATE TABLE outbox_messages (
                 id VARCHAR(36) PRIMARY KEY,
                 occurred_at TIMESTAMP NOT NULL,
@@ -32,7 +34,8 @@ async def engine():
                 processed_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """))
+        """)
+        )
     yield engine
     await engine.dispose()
 
@@ -60,7 +63,7 @@ async def test_get_pending_limits_and_retries(uow_factory):
             topic=f"t{i}",
             payload={"i": i},
             correlation_id=None,
-            retries=(5 if i == 4 else 0)
+            retries=(5 if i == 4 else 0),
         )
         msgs.append(msg)
         await storage.save(msg)
@@ -80,16 +83,19 @@ async def test_save_with_unit_of_work_does_not_commit(session_factory, uow_facto
         occurred_at=datetime.now(timezone.utc),
         type="event",
         topic="tx-test",
-        payload={"ok": True}
+        payload={"ok": True},
     )
 
     # Use an explicit session (UnitOfWork wrapping existing session)
     from unittest.mock import AsyncMock
+
     async with session_factory() as session:
         # Spy on commit but let it perform real commit so we can check visibility afterwards
         orig_commit = session.commit
+
         async def _wrapped_commit():
             await orig_commit()
+
         session.commit = AsyncMock(side_effect=_wrapped_commit)
 
         uow = SQLAlchemyUnitOfWork(session=session)
@@ -126,14 +132,14 @@ async def test_outbox_service_process_batch_success_and_failure(uow_factory):
         occurred_at=datetime.now(timezone.utc),
         type="event",
         topic="good",
-        payload={"x": 1}
+        payload={"x": 1},
     )
     msg_bad = OutboxMessage(
         id=uuid.uuid4(),
         occurred_at=datetime.now(timezone.utc),
         type="event",
         topic="bad",
-        payload={"x": 2}
+        payload={"x": 2},
     )
 
     await storage.save(msg_good)

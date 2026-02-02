@@ -1,4 +1,5 @@
 """Redis distributed lock implementation."""
+
 from typing import Any, List, Optional, Union
 import uuid
 import asyncio
@@ -6,6 +7,7 @@ import asyncio
 try:
     from redis.asyncio import Redis
     from redis.exceptions import LockError
+
     HAS_REDIS = True
 except ImportError:
     HAS_REDIS = False
@@ -16,38 +18,38 @@ except ImportError:
 class RedisLockStrategy:
     """
     Redis-based distributed lock implementation with Fair (FCFS) semantics.
-    
+
     Implements the LockStrategy protocol for ThreadSafetyMiddleware.
     Uses Redis ZSET (for queueing) and SET NX (for locking) managed via Lua scripts
     to ensure atomic, first-come-first-served acquisition.
-    
+
     Features:
     - Fair Locking: Requests are served in order of arrival (FCFS).
     - Atomic Queue Management: Lua scripts prevent race conditions.
     - Deadlock Prevention: Sorted resource locking and zombie cleanup.
     - Automatic Expiration: Locks expire automatically if not released.
     """
-    
+
     def __init__(
         self,
-        redis: 'Redis',
+        redis: "Redis",
         prefix: str = "lock",
         default_timeout: int = 30,
         retry_interval: float = 0.1,
-        max_retries: int = 100
+        max_retries: int = 100,
     ):
         if not HAS_REDIS:
             raise ImportError(
                 "redis is required. Install with: pip install py-cqrs-ddd-toolkit[redis]"
             )
-        
+
         self.redis = redis
         self.prefix = prefix
         self.default_timeout = default_timeout
         self.retry_interval = retry_interval
         # max_retries essentially limits the total wait time in the queue
         self.max_retries = max_retries
-    
+
     def _lock_key(self, entity_type: str, entity_id: Any) -> str:
         """Generate lock key (holds the owner token)."""
         return f"{self.prefix}:{entity_type}:{entity_id}"
@@ -55,27 +57,33 @@ class RedisLockStrategy:
     def _queue_key(self, entity_type: str, entity_id: Any) -> str:
         """Generate queue key (ZSET of waiters)."""
         return f"{self.prefix}:queue:{entity_type}:{entity_id}"
-    
+
     async def acquire(
         self,
         entity_type: str,
         entity_id_or_ids: Union[Any, List[Any]],
-        timeout: int = None
+        timeout: int = None,
     ) -> str:
         """
         Acquire lock(s) for entity/entities in a Fair (FCFS) manner.
         """
         timeout = timeout or self.default_timeout
         token = str(uuid.uuid4())
-        
+
         # Normalize and sort IDs to prevent deadlocks when locking multiple resources
-        ids = entity_id_or_ids if isinstance(entity_id_or_ids, list) else [entity_id_or_ids]
+        ids = (
+            entity_id_or_ids
+            if isinstance(entity_id_or_ids, list)
+            else [entity_id_or_ids]
+        )
         sorted_ids = sorted(str(id) for id in ids)
-        
+
         acquired_keys = []
         try:
             for entity_id in sorted_ids:
-                success = await self._acquire_single_fair(entity_type, entity_id, token, timeout)
+                success = await self._acquire_single_fair(
+                    entity_type, entity_id, token, timeout
+                )
                 if not success:
                     # Rolling back: Release all locks acquired so far
                     # Note: We must also remove ourselves from the queue if we gave up
@@ -83,26 +91,22 @@ class RedisLockStrategy:
                     raise TimeoutError(
                         f"Could not acquire fair lock for {entity_type}:{entity_id} within timeout"
                     )
-                
+
                 acquired_keys.append(entity_id)
-            
+
             return token
-        
+
         except Exception:
             # Cleanup on error
             await self._release_all(entity_type, sorted_ids, token)
             raise
-    
+
     async def _acquire_single_fair(
-        self,
-        entity_type: str,
-        entity_id: Any,
-        token: str,
-        timeout: int
+        self, entity_type: str, entity_id: Any, token: str, timeout: int
     ) -> bool:
         """
         Acquire a single lock using Fair algorithm.
-        
+
         Algorithm:
         1. Add self to ZSET (Queue) with score=NOW.
         2. Loop until timeout:
@@ -115,11 +119,11 @@ class RedisLockStrategy:
         lock_key = self._lock_key(entity_type, entity_id)
         queue_key = self._queue_key(entity_type, entity_id)
         timeout_ms = timeout * 1000
-        
+
         # Script to attempt acquisition if we are at the head of the queue
         # Keys: {queue_key}, {lock_key}
         # Args: {token}, {timeout_ms}, {current_timestamp}
-        # Returns: 
+        # Returns:
         #   0: Still in queue (not head, or lock held by other)
         #   1: Acquired
         fair_acquire_script = """
@@ -161,55 +165,51 @@ class RedisLockStrategy:
         end
         return 0
         """
-        
+
         import time
+
         start_time = time.time()
-        
+
         for attempt in range(self.max_retries):
             now_ts = time.time()
             if (now_ts - start_time) > timeout:
                 break
 
             result = await self.redis.eval(
-                fair_acquire_script,
-                2,
-                queue_key,
-                lock_key,
-                token,
-                timeout_ms,
-                now_ts
+                fair_acquire_script, 2, queue_key, lock_key, token, timeout_ms, now_ts
             )
-            
+
             if result == 1:
                 return True
-            
+
             await asyncio.sleep(self.retry_interval)
-            
+
         # Cleanup if failed
         await self.redis.zrem(queue_key, token)
         return False
 
     async def release(
-        self,
-        entity_type: str,
-        entity_id_or_ids: Union[Any, List[Any]],
-        token: str
+        self, entity_type: str, entity_id_or_ids: Union[Any, List[Any]], token: str
     ) -> None:
         """Release lock(s)."""
-        ids = entity_id_or_ids if isinstance(entity_id_or_ids, list) else [entity_id_or_ids]
+        ids = (
+            entity_id_or_ids
+            if isinstance(entity_id_or_ids, list)
+            else [entity_id_or_ids]
+        )
         await self._release_all(entity_type, sorted(str(id) for id in ids), token)
-        
+
     async def _release_all(self, entity_type: str, ids: List[str], token: str) -> None:
         """Atomic release of multiple locks."""
         if not ids:
-             return
+            return
 
         # Prepare interleaved keys: lock1, queue1, lock2, queue2...
         keys = []
         for entity_id in ids:
             keys.append(self._lock_key(entity_type, entity_id))
             keys.append(self._queue_key(entity_type, entity_id))
-            
+
         release_all_script = """
         local token = ARGV[1]
         for i = 1, #KEYS, 2 do
@@ -223,20 +223,16 @@ class RedisLockStrategy:
         end
         return 1
         """
-        
+
         await self.redis.eval(release_all_script, len(keys), *keys, token)
 
     async def extend(
-        self,
-        entity_type: str,
-        entity_id: Any,
-        token: str,
-        additional_time: int = None
+        self, entity_type: str, entity_id: Any, token: str, additional_time: int = None
     ) -> bool:
         """Extend lock timeout."""
         additional_time = additional_time or self.default_timeout
         key = self._lock_key(entity_type, entity_id)
-        
+
         extend_script = """
         if redis.call("GET", KEYS[1]) == ARGV[1] then
             return redis.call("PEXPIRE", KEYS[1], ARGV[2])
@@ -251,7 +247,7 @@ class RedisLockStrategy:
     async def is_locked(self, entity_type: str, entity_id: Any) -> bool:
         """Check if locked."""
         return await self.redis.exists(self._lock_key(entity_type, entity_id)) > 0
-    
+
     async def get_lock_owner(self, entity_type: str, entity_id: Any) -> Optional[str]:
         token = await self.redis.get(self._lock_key(entity_type, entity_id))
         return token.decode() if token else None
@@ -260,31 +256,37 @@ class RedisLockStrategy:
 class InMemoryLockStrategy:
     """
     In-memory lock implementation for testing.
-    
+
     NOT for production use - only works within a single process.
     """
-    
-    def __init__(self, timeout: int = 30, retry_interval: float = 0.1, max_retries: int = 100):
+
+    def __init__(
+        self, timeout: int = 30, retry_interval: float = 0.1, max_retries: int = 100
+    ):
         self._locks: dict = {}
         self.timeout = timeout
         self.retry_interval = retry_interval
         self.max_retries = max_retries
-    
+
     async def acquire(
         self,
         entity_type: str,
         entity_id_or_ids: Union[Any, List[Any]],
-        timeout: int = None
+        timeout: int = None,
     ) -> str:
         """Acquire locks."""
         token = str(uuid.uuid4())
-        ids = entity_id_or_ids if isinstance(entity_id_or_ids, list) else [entity_id_or_ids]
+        ids = (
+            entity_id_or_ids
+            if isinstance(entity_id_or_ids, list)
+            else [entity_id_or_ids]
+        )
         sorted_ids = sorted(str(id) for id in ids)
-        
+
         acquired = []
         for entity_id in sorted_ids:
             key = f"{entity_type}:{entity_id}"
-            
+
             for _ in range(self.max_retries):
                 if key not in self._locks:
                     self._locks[key] = token
@@ -297,23 +299,24 @@ class InMemoryLockStrategy:
                     if self._locks.get(k) == token:
                         del self._locks[k]
                 raise TimeoutError(f"Could not acquire lock for {key}")
-        
+
         return token
-    
+
     async def release(
-        self,
-        entity_type: str,
-        entity_id_or_ids: Union[Any, List[Any]],
-        token: str
+        self, entity_type: str, entity_id_or_ids: Union[Any, List[Any]], token: str
     ) -> None:
         """Release locks."""
-        ids = entity_id_or_ids if isinstance(entity_id_or_ids, list) else [entity_id_or_ids]
-        
+        ids = (
+            entity_id_or_ids
+            if isinstance(entity_id_or_ids, list)
+            else [entity_id_or_ids]
+        )
+
         for entity_id in ids:
             key = f"{entity_type}:{entity_id}"
             if self._locks.get(key) == token:
                 del self._locks[key]
-    
+
     def clear(self) -> None:
         """Clear all locks (for testing)."""
         self._locks.clear()
