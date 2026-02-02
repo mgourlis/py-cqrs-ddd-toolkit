@@ -23,6 +23,12 @@ graph TD
         EH[Event Handlers]
     end
 
+    subgraph "Saga Orchestration"
+        SM[Saga Manager]
+        S[Saga Instance]
+        SR[Saga Repository]
+    end
+
     subgraph "Domain Layer"
         AR[Aggregate Roots]
         E[Entities]
@@ -33,7 +39,6 @@ graph TD
     subgraph "Infrastructure Layer"
         PD[Persistence Dispatcher]
         OS[Outbox Service]
-        SM[Saga Manager]
         ES[Event Store]
     end
 
@@ -43,9 +48,12 @@ graph TD
     CH -->|Mutates| AR
     AR -->|Produces| DE
     DE -->|Triggers| EH
+    DE -->|Triggers| SM
+    SM -->|Loads/Saves| SR
+    SM -->|Coordinates| S
+    S -->|Dispatches| M
     DE -->|Persisted to| OS
     CH -->|Operations| PD
-    EH -->|Orchestrated by| SM
 ```
 
 ---
@@ -722,6 +730,59 @@ except DomainError as e:
 
 ## Process Management (Sagas)
 Sagas coordinate long-running distributed transactions through **Orchestration** or **Choreography**. They maintain state across multiple independent transactions, ensuring that eventual consistency is achieved even when individual steps fail.
+
+```mermaid
+sequenceDiagram
+    participant M as Mediator
+    participant SM as Saga Manager
+    participant R as Saga Repository
+    participant L as Lock Strategy
+    participant S as Saga Instance
+
+    M->>SM: Handle Event
+    SM->>L: Acquire Lock (Correlation ID)
+    SM->>R: Load Context
+    SM->>S: Apply Step (Event)
+    activate S
+    S-->>S: Update Internal State
+    S-->>S: Queue Pending Commands
+    deactivate S
+    SM->>R: Save Context
+    SM->>M: Dispatch Pending Commands
+    SM->>L: Release Lock
+```
+
+### Management Patterns
+
+The toolkit supports two primary ways to manage saga lifecycles:
+
+#### 1. Choreography (`SagaChoreographyManager`)
+Sagas react to domain events published by aggregates. This is the most decoupled approach.
+
+```mermaid
+graph LR
+    A[Aggregate] -- "Produces" --> E1[Event A]
+    E1 -- "Triggers" --> CM[Choreography Manager]
+    CM -- "Loads/Steps" --> S[Saga Instance]
+    S -- "Dispatches" --> C1[Command B]
+    C1 -- "Mutates" --> B[Another Aggregate]
+    B -- "Produces" --> E2[Event B]
+    E2 -- "Triggers" --> CM
+```
+
+#### 2. Orchestration (`SagaOrchestratorManager`)
+A central manager explicitly drives the saga. This is useful when the saga is the primary entry point for a complex business process started by a command.
+
+```mermaid
+graph TD
+    CH[Command Handler] -- "Starts" --> OM[Orchestrator Manager]
+    OM -- "Runs" --> S[Saga Instance]
+    S -- "Dispatches" --> C1[Command 1]
+    C1 -- "Processed by" --> H1[Handler 1]
+    H1 -- "Returns Result" --> OM
+    OM -- "Continues" --> S
+    S -- "Dispatches" --> C2[Command 2]
+```
 
 ### Core Components
 
