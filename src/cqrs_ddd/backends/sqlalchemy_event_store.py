@@ -126,17 +126,19 @@ class SQLAlchemyEventStore:
             new_version = current_version + 1
 
             # Insert event
-            insert_sql = text(f"""
+            insert_sql = text(
+                f"""
                 INSERT INTO {self._table_name} (
-                    event_id, aggregate_type, aggregate_id, event_type, 
-                    event_version, occurred_at, user_id, correlation_id, 
+                    event_id, aggregate_type, aggregate_id, event_type,
+                    event_version, occurred_at, user_id, correlation_id,
                     causation_id, payload, aggregate_version
                 ) VALUES (
                     :event_id, :aggregate_type, :aggregate_id, :event_type,
                     :event_version, :occurred_at, :user_id, :correlation_id,
                     :causation_id, :payload, :aggregate_version
                 ) RETURNING id
-            """)
+            """
+            )
 
             payload = event.to_dict()
             # Ensure payload is JSON-serializable for DB drivers like sqlite
@@ -249,11 +251,13 @@ class SQLAlchemyEventStore:
                 conditions.append("aggregate_version <= :to_version")
                 params["to_version"] = to_version
 
-            sql = text(f"""
+            sql = text(
+                f"""
                 SELECT * FROM {self._table_name}
                 WHERE {" AND ".join(conditions)}
                 ORDER BY aggregate_version ASC
-            """)
+            """
+            )
 
             result = await session.execute(sql, params)
             rows = result.mappings().all()
@@ -272,11 +276,13 @@ class SQLAlchemyEventStore:
         from sqlalchemy import text
 
         async def _query(session):
-            sql = text(f"""
+            sql = text(
+                f"""
                 SELECT * FROM {self._table_name}
                 WHERE correlation_id = :correlation_id
                 ORDER BY id ASC
-            """)
+            """
+            )
 
             result = await session.execute(sql, {"correlation_id": correlation_id})
             rows = result.mappings().all()
@@ -299,14 +305,16 @@ class SQLAlchemyEventStore:
         from sqlalchemy import text
 
         async def _query(session):
-            sql = text(f"""
+            sql = text(
+                f"""
                 SELECT * FROM {self._table_name}
                 WHERE aggregate_type = :aggregate_type
                 AND aggregate_id = :aggregate_id
                 AND is_undone = FALSE
                 ORDER BY aggregate_version DESC
                 LIMIT :count
-            """)
+            """
+            )
 
             result = await session.execute(
                 sql,
@@ -337,14 +345,16 @@ class SQLAlchemyEventStore:
         from datetime import datetime, timezone
 
         async def _execute(session):
-            sql = text(f"""
+            sql = text(
+                f"""
                 UPDATE {self._table_name}
                 SET is_undone = TRUE,
                     undone_at = :undone_at,
                     undone_by = :undone_by,
                     undo_event_id = :undo_event_id
                 WHERE event_id = :event_id
-            """)
+            """
+            )
 
             await session.execute(
                 sql,
@@ -382,12 +392,14 @@ class SQLAlchemyEventStore:
         """Internal: get version within existing session."""
         from sqlalchemy import text
 
-        sql = text(f"""
+        sql = text(
+            f"""
             SELECT COALESCE(MAX(aggregate_version), 0) as version
             FROM {self._table_name}
             WHERE aggregate_type = :aggregate_type
               AND aggregate_id = :aggregate_id
-        """)
+        """
+        )
 
         result = await session.execute(
             sql,

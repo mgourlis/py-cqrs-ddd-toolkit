@@ -47,7 +47,8 @@ async def engine():
     async with engine.begin() as conn:
         # Create compatible SQLite table
         await conn.execute(
-            text("""
+            text(
+                """
             CREATE TABLE domain_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id VARCHAR(36) NOT NULL UNIQUE,
@@ -67,7 +68,8 @@ async def engine():
                 undo_event_id VARCHAR(36),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+            )
         )
     yield engine
     await engine.dispose()

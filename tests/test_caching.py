@@ -135,6 +135,7 @@ async def test_invalidate_decorator():
     # Setup cache with value
     def key_builder(f, arg):
         return f"key:{arg}"
+
     await mock_service.set("key:123", "old_val")
 
     executed = False

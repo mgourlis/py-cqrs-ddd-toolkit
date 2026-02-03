@@ -132,11 +132,11 @@ class RedisLockStrategy:
         local token = ARGV[1]
         local timeout_ms = tonumber(ARGV[2])
         local now = tonumber(ARGV[3])
-        
+
         -- 1. Ensure we are in the queue (idempotent ZADD)
         -- We use 'NX' to keep original arrival time if already there
         redis.call('ZADD', queue_key, 'NX', now, token)
-        
+
         -- 2. Clean up zombies (optional lazy cleanup)
         -- If head is older than 2x timeout, remove it (safety valve)
         local head = redis.call('ZRANGE', queue_key, 0, 0, 'WITHSCORES')
@@ -149,7 +149,7 @@ class RedisLockStrategy:
 
         -- 3. Check Rank
         local rank = redis.call('ZRANK', queue_key, token)
-        
+
         -- If we are at the front (rank 0)
         if rank == 0 then
             -- Try to acquire the lock
@@ -215,7 +215,7 @@ class RedisLockStrategy:
         for i = 1, #KEYS, 2 do
             local lock_key = KEYS[i]
             local queue_key = KEYS[i+1]
-            
+
             if redis.call("GET", lock_key) == token then
                 redis.call("DEL", lock_key)
             end

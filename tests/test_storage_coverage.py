@@ -92,21 +92,21 @@ async def test_local_storage_comprehensive(monkeypatch):
 async def test_s3_storage_comprehensive():
     mock_session = MagicMock()
     mock_client = MagicMock()
-    
+
     mock_client.head_object = AsyncMock(
         side_effect=[S3ClientError("404"), S3ClientError("500"), {}]
     )
     mock_client.put_object = AsyncMock()
     mock_client.delete_object = AsyncMock()
-    
+
     m_stream = AsyncMock()
     m_stream.read.return_value = b"hi"
     mock_client.get_object = AsyncMock(return_value={"Body": AsyncCM(m_stream)})
-    
+
     mock_paginator = MagicMock()
     mock_paginator.paginate.return_value = AIter([{"Contents": [{"Key": "/f1"}]}])
     mock_client.get_paginator.return_value = mock_paginator
-    
+
     mock_session.create_client.return_value = AsyncCM(mock_client)
 
     storage = S3Storage("b", session=mock_session)

@@ -380,8 +380,6 @@ def saga_step(event_type: Type):
     return decorator
 
 
-
-
 class InMemorySagaRepository(SagaRepository):
     """In-memory saga repository for testing."""
 

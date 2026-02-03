@@ -54,6 +54,8 @@ dev = [
     "mypy>=1.0",
     "httpx>=0.25",
     "aio-pika>=8.0",
+    "ruff>=0.1.0",
+    "pre-commit>=3.5.0",
 ]
 all = [
     "py-cqrs-ddd-toolkit[pydantic,sqlalchemy,fastapi,django,inject,redis,dramatiq,dramatiq-abort,rabbitmq,dev,opentelemetry,sentry,storage-local,storage-s3,storage-dropbox,storage-gcs,temporal,tenacity]",
@@ -69,6 +71,7 @@ packages = ["src/cqrs_ddd"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "--cov=src/cqrs_ddd --cov-report=term-missing"
 

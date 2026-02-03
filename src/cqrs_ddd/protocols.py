@@ -86,7 +86,7 @@ class CacheService(Protocol):
         """Get a value from cache."""
         ...
 
-    async def set(self, key: str, value: Any, ttl: int = None) -> None:
+    async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
         """Set a value in cache with optional TTL."""
         ...
 
@@ -102,7 +102,7 @@ class CacheService(Protocol):
         """Get multiple values from cache."""
         ...
 
-    async def set_batch(self, entries: List[dict], ttl: int = None) -> None:
+    async def set_batch(self, entries: List[dict], ttl: Optional[int] = None) -> None:
         """Set multiple values in cache. Each entry has 'cache_key' and 'value'."""
         ...
 
@@ -333,11 +333,14 @@ class UndoExecutor(Protocol[T]):
 class UndoExecutorRegistry(Protocol):
     """Protocol for undo executor registry."""
 
-    def register(self, executor: UndoExecutor) -> None: ...
+    def register(self, executor: UndoExecutor) -> None:
+        ...
 
-    def get(self, event_type: str) -> Optional[UndoExecutor]: ...
+    def get(self, event_type: str) -> Optional[UndoExecutor]:
+        ...
 
-    def has_executor(self, event_type: str) -> bool: ...
+    def has_executor(self, event_type: str) -> bool:
+        ...
 
 
 @runtime_checkable
@@ -440,13 +443,16 @@ class EventConsumer(Protocol):
 class SagaRepository(Protocol):
     """Protocol for persisting saga state."""
 
-    async def save(self, context: Any) -> None: ...
+    async def save(self, context: Any) -> None:
+        ...
 
-    async def load(self, saga_id: str) -> Optional[Any]: ...
+    async def load(self, saga_id: str) -> Optional[Any]:
+        ...
 
     async def find_by_correlation_id(
         self, correlation_id: str, saga_type: str
-    ) -> Optional[Any]: ...
+    ) -> Optional[Any]:
+        ...
 
     async def find_stalled_sagas(self, limit: int = 10) -> List[Any]:
         """Find sagas that are stalled (is_stalled=True)."""

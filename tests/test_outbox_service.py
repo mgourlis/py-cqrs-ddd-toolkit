@@ -20,7 +20,8 @@ async def engine():
     )
     async with engine.begin() as conn:
         await conn.execute(
-            text("""
+            text(
+                """
             CREATE TABLE outbox_messages (
                 id VARCHAR(36) PRIMARY KEY,
                 occurred_at TIMESTAMP NOT NULL,
@@ -34,7 +35,8 @@ async def engine():
                 processed_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+            )
         )
     yield engine
     await engine.dispose()

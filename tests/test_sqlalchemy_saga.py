@@ -18,7 +18,8 @@ async def engine():
     )
     async with engine.begin() as conn:
         await conn.execute(
-            text("""
+            text(
+                """
             CREATE TABLE sagas (
                 saga_id VARCHAR(64) PRIMARY KEY,
                 saga_type VARCHAR(128),
@@ -39,7 +40,8 @@ async def engine():
                 failed_compensations JSON,
                 pending_commands JSON
             )
-        """)
+        """
+            )
         )
     yield engine
     await engine.dispose()
@@ -140,10 +142,12 @@ async def test_timezone_conversion(engine, session_factory):
     # Insert a row with naive timestamps (no tzinfo) and ensure loaded object gets tzinfo
     async with engine.begin() as conn:
         await conn.execute(
-            text("""
+            text(
+                """
             INSERT INTO sagas (saga_id, saga_type, correlation_id, current_step, state, history, processed_message_ids, created_at, updated_at)
             VALUES (:saga_id, :saga_type, :correlation_id, :current_step, :state, :history, :processed_message_ids, :created_at, :updated_at)
-        """),
+        """
+            ),
             {
                 "saga_id": "tz-saga",
                 "saga_type": "TestSaga",

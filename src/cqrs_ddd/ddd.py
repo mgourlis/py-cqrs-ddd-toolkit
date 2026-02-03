@@ -201,6 +201,7 @@ class ValueObject(ABC):
 @dataclass
 class DomainEvent(DomainEventBase):
     """Base class for Domain Events."""
+
     pass
 
 

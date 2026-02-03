@@ -165,9 +165,7 @@ async def test_autodiscovery():
         # _discover_handlers is called inside dispatch methods
 
         # We need to spy on 'register' to see if it was called
-        with patch.object(
-            dispatcher, "register", wraps=dispatcher.register
-        ) as _:
+        with patch.object(dispatcher, "register", wraps=dispatcher.register) as _:
             await dispatcher.dispatch_priority(UserCreated("frank"))
 
             # Should have registered both?

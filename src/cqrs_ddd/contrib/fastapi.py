@@ -1,17 +1,17 @@
 """FastAPI integration for CQRS/DDD toolkit."""
 
-from typing import Type, Callable, Any
+from typing import Type, Callable, Any, Optional
 
 try:
-    from fastapi import APIRouter, Depends, HTTPException, Request
+    from fastapi import APIRouter, Depends, HTTPException, Request  # type: ignore
 
     HAS_FASTAPI = True
 except ImportError:
     HAS_FASTAPI = False
-    APIRouter = Any
-    Depends = Any
-    HTTPException = Any
-    Request = Any
+    APIRouter = Any  # type: ignore
+    Depends = Any  # type: ignore
+    HTTPException = Any  # type: ignore
+    Request = Any  # type: ignore
 
 from ..mediator import Mediator
 from ..protocols import OutboxProcessor
@@ -55,15 +55,15 @@ class CQRSRouter:
         container: Any = None,
         mediator_provider: Any = None,
         prefix: str = "",
-        tags: list = None,
-        **kwargs,
+        tags: Optional[list[str]] = None,
+        **kwargs: Any,
     ):
         if not HAS_FASTAPI:
             raise ImportError(
                 "FastAPI is required. Install with: pip install py-cqrs-ddd-toolkit[fastapi]"
             )
 
-        self.router = APIRouter(prefix=prefix, tags=tags or [], **kwargs)
+        self.router = APIRouter(prefix=prefix, tags=tags or [], **kwargs)  # type: ignore
 
         if mediator_provider:
             self._mediator_dep = mediator_provider
@@ -78,11 +78,11 @@ class CQRSRouter:
     def command(
         self,
         path: str,
-        command_class: Type,
-        response_model: Type = None,
+        command_class: Type[Any],
+        response_model: Optional[Type[Any]] = None,
         status_code: int = 200,
-        response_mapper: Callable[[Any], Any] = None,
-        **kwargs,
+        response_mapper: Optional[Callable[[Any], Any]] = None,
+        **kwargs: Any,
     ):
         """Register a command endpoint."""
 
@@ -90,7 +90,8 @@ class CQRSRouter:
             path, response_model=response_model, status_code=status_code, **kwargs
         )
         async def command_endpoint(
-            cmd: command_class, mediator: Mediator = Depends(self._mediator_dep)
+            cmd: command_class,  # type: ignore
+            mediator: Mediator = Depends(self._mediator_dep),
         ):
             result = await mediator.send(cmd)
             if response_mapper:
@@ -102,16 +103,16 @@ class CQRSRouter:
     def query(
         self,
         path: str,
-        query_class: Type,
-        response_model: Type = None,
-        response_mapper: Callable[[Any], Any] = None,
-        **kwargs,
+        query_class: Type[Any],
+        response_model: Optional[Type[Any]] = None,
+        response_mapper: Optional[Callable[[Any], Any]] = None,
+        **kwargs: Any,
     ):
         """Register a query endpoint."""
 
         @self.router.get(path, response_model=response_model, **kwargs)
         async def query_endpoint(
-            query: query_class = Depends(),
+            query: query_class = Depends(),  # type: ignore
             mediator: Mediator = Depends(self._mediator_dep),
         ):
             result = await mediator.send(query)
@@ -127,7 +128,7 @@ class CQRSRouter:
 # =============================================================================
 
 
-def register_exception_handlers(app):
+def register_exception_handlers(app: Any) -> None:
     """
     Register CQRS exception handlers with FastAPI app.
 
@@ -151,37 +152,49 @@ def register_exception_handlers(app):
     from fastapi.responses import JSONResponse
 
     @app.exception_handler(ValidationError)
-    async def validation_error_handler(request: Request, exc: ValidationError):
+    async def validation_error_handler(
+        request: Request, exc: ValidationError
+    ) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": exc.to_dict()})
 
     @app.exception_handler(EntityNotFoundError)
-    async def not_found_handler(request: Request, exc: EntityNotFoundError):
+    async def not_found_handler(
+        request: Request, exc: EntityNotFoundError
+    ) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": str(exc)})
 
     @app.exception_handler(DomainError)
-    async def domain_error_handler(request: Request, exc: DomainError):
+    async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
         return JSONResponse(
             status_code=400,
             content={"detail": {"code": exc.code, "message": exc.message}},
         )
 
     @app.exception_handler(AuthorizationError)
-    async def authorization_error_handler(request: Request, exc: AuthorizationError):
+    async def authorization_error_handler(
+        request: Request, exc: AuthorizationError
+    ) -> JSONResponse:
         return JSONResponse(status_code=403, content={"detail": str(exc)})
 
     @app.exception_handler(ConcurrencyError)
-    async def concurrency_error_handler(request: Request, exc: ConcurrencyError):
+    async def concurrency_error_handler(
+        request: Request, exc: ConcurrencyError
+    ) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @app.exception_handler(InfrastructureError)
-    async def infrastructure_error_handler(request: Request, exc: InfrastructureError):
+    async def infrastructure_error_handler(
+        request: Request, exc: InfrastructureError
+    ) -> JSONResponse:
         return JSONResponse(
             status_code=503,
             content={"detail": {"code": exc.code, "message": "Service unavailable"}},
         )
 
     @app.exception_handler(HandlerNotFoundError)
-    async def handler_not_found_handler(request: Request, exc: HandlerNotFoundError):
+    async def handler_not_found_handler(
+        request: Request, exc: HandlerNotFoundError
+    ) -> JSONResponse:
         return JSONResponse(status_code=501, content={"detail": str(exc)})
 
 
@@ -190,7 +203,7 @@ def register_exception_handlers(app):
 # =============================================================================
 
 
-def register_outbox_worker(app, worker: OutboxProcessor):
+def register_outbox_worker(app: Any, worker: OutboxProcessor) -> None:
     """
     Register an OutboxWorker (or any OutboxProcessor) with FastAPI.
 
@@ -203,10 +216,10 @@ def register_outbox_worker(app, worker: OutboxProcessor):
     if not HAS_FASTAPI:
         return
 
-    async def start_outbox():
+    async def start_outbox() -> None:
         await worker.start()
 
-    async def stop_outbox():
+    async def stop_outbox() -> None:
         await worker.stop()
 
     # Prefer add_event_handler instead of @app.on_event (on_event is deprecated)
@@ -214,7 +227,7 @@ def register_outbox_worker(app, worker: OutboxProcessor):
     app.add_event_handler("shutdown", stop_outbox)
 
 
-def init_cqrs(app, container: Any, enable_exception_handlers: bool = True):
+def init_cqrs(app: Any, container: Any, enable_exception_handlers: bool = True) -> None:
     """
     Initialize all CQRS components for a FastAPI application.
 
@@ -227,7 +240,7 @@ def init_cqrs(app, container: Any, enable_exception_handlers: bool = True):
     if not HAS_FASTAPI:
         return
 
-    async def startup_container():
+    async def startup_container() -> None:
         # Initialize container resources (autowire_router, etc.)
         container.init_resources()
 

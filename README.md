@@ -1,6 +1,6 @@
 # cqrs-ddd-toolkit: Analytical Architecture & Usage Guide
 
-A high-performance, framework-agnostic toolkit for building complex systems using **CQRS (Command Query Responsibility Segregation)**, **DDD (Domain-Driven Design)**, and the **Saga Pattern**. 
+A high-performance, framework-agnostic toolkit for building complex systems using **CQRS (Command Query Responsibility Segregation)**, **DDD (Domain-Driven Design)**, and the **Saga Pattern**.
 
 Designed for scalability, auditability, and clear separation of concerns, this toolkit provides the backbone for systems that require strong consistency, transactional integrity, and stateful orchestrations.
 
@@ -78,7 +78,7 @@ class Product(AggregateRoot):
         # Business logic / Invariant checks here
         if new_price < 0:
             raise ValueError("Price cannot be negative")
-            
+
         self.price = new_price
         # Tracking side effects
         self.add_domain_event(ProductPriceChanged(id=self.id, price=new_price))
@@ -135,7 +135,7 @@ from cqrs_ddd.domain_event import DomainEventBase
 class ProductPriceChanged(DomainEventBase):
     product_id: str
     new_price: float
-    
+
     @property
     def aggregate_id(self) -> str:
         return self.product_id
@@ -154,7 +154,7 @@ A common question is how to handle complex hierarchies or relations between mult
 class Order(AggregateRoot):
     created_by_id: str  # Reference by ID to User AR
     items: List[OrderItem]  # Internal Entity collection
-    
+
     def add_item(self, product_id: str, quantity: int):
         # Items are managed by the Order Root
         self.items.append(OrderItem(product_id=product_id, quantity=quantity))
@@ -228,7 +228,7 @@ class WelcomeEmailHandler(EventHandler):
 # Event Example (Priority/Synchronous)
 class AuditLogHandler(EventHandler):
     is_priority = True  # Runs in the same transaction
-    
+
     async def handle(self, event: Union[UserCreated, BioUpdated]):
         # Handles multiple event types
         pass
@@ -325,9 +325,9 @@ sequenceDiagram
     T->>V: 4. Validate Content
     V->>I: 5. Compute & Inject Attrs
     I->>H: 6. Execute handle()
-    
+
     Note over H: Business Logic Happens
-    
+
     H-->>I: 7. Return Result
     I-->>V: 8. Pass Result
     V-->>T: 9. Pass Result
@@ -408,7 +408,7 @@ from cqrs_ddd.persistence_dispatcher import OperationPersistence
 # 1. Define the Handler
 class SaveUserHandler(OperationPersistence[UserCreated]):
     priority = 100 # Ensure this runs FIRST and provides the primary result
-    
+
     async def persist(self, modification: UserCreated, uow):
         # modification.entity contains the aggregate
         # uow contains the database session
@@ -429,7 +429,7 @@ from cqrs_ddd.persistence_dispatcher import RetrievalPersistence
 class UserRetrievalHandler(RetrievalPersistence[User]):
     entity_name = "User" # Enables Read-Through Caching
     cache_ttl = 300
-    
+
     async def retrieve(self, entity_ids: List[str], uow) -> List[User]:
         records = await uow.session.query(UserRecord).filter(id__in=entity_ids).all()
         return [r.to_domain() for r in records]
@@ -446,7 +446,7 @@ from cqrs_ddd.persistence_dispatcher import QueryPersistence
 
 class UserDashboardHandler(QueryPersistence[UserDashboardDTO]):
     entity_name = "UserDashboard"
-    
+
     async def fetch(self, entity_ids: List[str], uow) -> List[UserDashboardDTO]:
         # Raw SQL or optimized query for visualization
         return [UserDashboardDTO(...)]
@@ -471,7 +471,7 @@ You can register multiple handlers for the same `Modification`. They will execut
 ```python
 class AuditLogPersistence(OperationPersistence[UserCreated]):
     priority = 10 # Runs AFTER SaveUserHandler (priority 100)
-    
+
     async def persist(self, mod, uow):
         await uow.session.add(AuditEntry(action="USER_CREATED", id=mod.entity.id))
 ```
@@ -482,7 +482,7 @@ For entities with **High Write Volume / Low Read Volume** (e.g., telemetry, audi
 ```python
 class TelemetryHandler(OperationPersistence[MetricRecorded]):
     use_cache = False  # Skip Redis invalidation on every write
-    
+
     async def persist(self, modification, uow):
         # High-speed insert logic...
         ...
@@ -528,7 +528,7 @@ class PriceUpdateUndo(UndoExecutor[PriceUpdated]):
     # Optional logic to check if undo is still valid
     async def can_undo(self, event: PriceUpdated) -> bool:
         return not event.entity.is_locked
-        
+
     async def undo(self, event: PriceUpdated):
         # Generate compensating event to restore the old price
         return [PriceUpdated(new_price=event.old_price)]
@@ -641,7 +641,7 @@ storage = GoogleCloudStorage(
 
 ---
 
-## Infrastructure Backends 
+## Infrastructure Backends
 Detailed guide to the core infrastructure implementations included in the toolkit.
 
 ### SQLAlchemy Backend
@@ -832,7 +832,7 @@ class OrderState(BaseModel):
 
 class OrderSaga(PydanticSaga[OrderState]):
     state_model = OrderState
-    
+
     @saga_step(OrderCreated)
     async def on_order_created(self, event: OrderCreated):
         """Step 1: Init state and trigger payment."""
@@ -1027,7 +1027,7 @@ from cqrs_ddd.contrib.dependency_injector import Container as CoreContainer
 class AppContainer(containers.DeclarativeContainer):
     # Nest the toolkit core
     core = providers.Container(CoreContainer)
-    
+
     # Define your business services
     user_repo = providers.Singleton(SqlAlchemyUserRepo)
 ```
@@ -1048,7 +1048,7 @@ async def lifespan(app: FastAPI):
     container.core.config.from_dict({
         "scan_packages": ["myapp.application"]
     })
-    
+
     # 2. Provide required infrastructure overrides
     container.core.uow_factory.override(
         create_uow_factory(session_factory=my_session_maker)
@@ -1056,14 +1056,14 @@ async def lifespan(app: FastAPI):
     container.core.message_broker.override(
         RabbitMQPublisher(url="...")
     )
-    
+
     # 3. Complete the wiring
     container.wire(packages=["myapp.api", "myapp.application"])
     container.core.wire(packages=["myapp.api", "myapp.application"])
-    
+
     # 4. Install wired middlewares (Enables @inject in @middleware stacks)
     install_di()
-    
+
     yield
 ```
 
@@ -1125,7 +1125,7 @@ from cqrs_ddd.contrib import dependency_injector
 class MyContainer(dependency_injector.Container):
     # Override the routing actor to use your custom one
     dramatiq_routing_actor = providers.Object(custom_router)
-    
+
     # success! 'dramatiq_event_publisher' now targets 'custom_router'
 ```
 
@@ -1161,7 +1161,7 @@ container = AppContainer()
 set_dispatcher_resolver(lambda: container.core.event_dispatcher())
 
 # 3. Import actors (so Dramatiq finds 'default_domain_event_router')
-import cqrs_ddd.contrib.dramatiq_tasks 
+import cqrs_ddd.contrib.dramatiq_tasks
 ```
 
 #### 4. Embedded Worker (Dev/Simple)
@@ -1249,12 +1249,12 @@ async def lifespan(app: FastAPI):
     # 1. Initialize DB & Container
     container = MyContainer()
     container.wire(modules=[...])
-    
+
     # 2. Init resources (auto-wiring events)
     container.init_resources()
-    
+
     yield
-    
+
     # Clean up
     await container.shutdown_resources()
 
@@ -1274,16 +1274,16 @@ router = CQRSRouter(container=container, prefix="/api/v1")
 
 # Command (POST): Maps body -> Command -> Dispatch
 router.command(
-    "/products", 
-    CreateProduct, 
+    "/products",
+    CreateProduct,
     response_model=CommandResult,
     response_mapper=lambda r: {"id": r.result}
 )
 
 # Query (GET): Maps query params -> Query -> Dispatch
 router.query(
-    "/products/{id}", 
-    GetProduct, 
+    "/products/{id}",
+    GetProduct,
     response_model=ProductDto
 )
 
@@ -1328,10 +1328,10 @@ class ProductView(CQRSView):
     async def post(self, request):
         # 1. Parse body into Command
         cmd = self.parse_body(request, CreateProduct)
-        
+
         # 2. Dispatch
         result = await self.dispatch_command(cmd)
-        
+
         # 3. Return JSON
         return self.success({"id": result.result}, status=201)
 

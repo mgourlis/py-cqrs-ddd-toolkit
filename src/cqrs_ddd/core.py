@@ -61,7 +61,16 @@ class AbstractDomainEvent:
 class AbstractOutboxMessage:
     """Marker class for all outbox messages."""
 
-    pass
+    id: Any
+    occurred_at: Any
+    type: str
+    topic: str
+    payload: dict
+    correlation_id: Optional[str]
+    status: str
+    retries: int
+    error: Optional[str]
+    processed_at: Optional[Any]
 
 
 @dataclass(kw_only=True)
@@ -76,7 +85,7 @@ class Command(AbstractCommand):
     _command_id: str = field(
         default_factory=lambda: str(import_uuid().uuid4()), repr=False
     )
-    _correlation_id: str = field(default=None, repr=False)
+    _correlation_id: Optional[str] = field(default=None, repr=False)
 
     @property
     def command_id(self) -> str:
@@ -110,7 +119,7 @@ class Query(AbstractQuery):
     _query_id: str = field(
         default_factory=lambda: str(import_uuid().uuid4()), repr=False
     )
-    _correlation_id: str = field(default=None, repr=False)
+    _correlation_id: Optional[str] = field(default=None, repr=False)
 
     @property
     def query_id(self) -> str:
@@ -343,8 +352,8 @@ class CommandResponse(Generic[TResult]):
 
     result: TResult
     events: List[Any] = field(default_factory=list)
-    correlation_id: str = None
-    causation_id: str = None
+    correlation_id: Optional[str] = None
+    causation_id: Optional[str] = None
 
     @property
     def response(self) -> TResult:

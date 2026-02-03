@@ -103,9 +103,7 @@ class SQLAlchemySagaRepository(SagaRepository):
 
     async def find_stalled_sagas(self, limit: int = 10) -> List[SagaContext]:
         """Find sagas that are stalled."""
-        query = (
-            sa.select(self.table).where(self.table.c.is_stalled).limit(limit)
-        )
+        query = sa.select(self.table).where(self.table.c.is_stalled).limit(limit)
         result = await self.session.execute(query)
         rows = result.all()
         return [self._map_to_context(row) for row in rows]

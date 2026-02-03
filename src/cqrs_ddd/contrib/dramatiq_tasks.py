@@ -16,12 +16,14 @@ try:
     from dramatiq.results import Results
     from dramatiq.results.backends import RedisBackend
     from dramatiq.middleware import AsyncIO, Retries
-    from dramatiq_abort import Abort
+    from dramatiq_abort import Abort  # type: ignore
     from dramatiq import Worker
 
     HAS_DRAMATIQ = True
 except ImportError:
     HAS_DRAMATIQ = False
+    # Define dummies for optional imports to avoid NameError if used in type hints
+    dramatiq = Any  # type: ignore
 
 from ..protocols import MessagePublisher, EventConsumer
 from ..event_registry import EventTypeRegistry
@@ -33,7 +35,7 @@ def setup_dramatiq(
     broker_url: str = "amqp://guest:guest@localhost:5672",
     redis_url: str = "redis://localhost:6379/0",
     enable_asyncio: bool = True,
-    middleware: List[Any] = None,
+    middleware: Optional[List[Any]] = None,
 ) -> "dramatiq.Broker":
     """
     Configure Dramatiq with RabbitMQ broker and Redis backend.
@@ -103,7 +105,7 @@ class DramatiqEventPublisher(MessagePublisher):
             raise ImportError("Dramatiq is required for DramatiqEventPublisher")
         self.routing_actor = routing_actor
 
-    async def publish(self, topic: str, message: Any, **kwargs) -> None:
+    async def publish(self, topic: str, message: Any, **kwargs: Any) -> None:
         """
         Publish a message by sending it to the routing actor.
 
@@ -149,7 +151,7 @@ class DramatiqWorkerConsumer(EventConsumer):
     def __init__(
         self,
         broker: "dramatiq.Broker",
-        queues: List[str] = None,
+        queues: Optional[List[str]] = None,
         worker_threads: int = 1,
     ):
         """
@@ -175,7 +177,7 @@ class DramatiqWorkerConsumer(EventConsumer):
         logger.info(f"Starting DramatiqWorkerConsumer for queues: {self.queues}")
 
         self._worker = Worker(
-            self.broker, queues=self.queues, worker_threads=self.worker_threads
+            self.broker, queues=set(self.queues), worker_threads=self.worker_threads
         )
 
         # Worker.start() blocks, so run in a thread
@@ -225,8 +227,12 @@ async def handle_dramatiq_event(message: Dict[str, Any], dispatcher: Any) -> Non
 
     logger.debug(f"Received Dramatiq event user task: {topic}")
 
-    async def _dispatch():
+    async def _dispatch() -> None:
         # Hydrate the event using the registry
+        if not isinstance(topic, str):
+            logger.warning("Event topic is missing or invalid in Dramatiq message.")
+            return
+
         event = EventTypeRegistry.hydrate_dict(topic, payload)
 
         if not event:
@@ -265,3 +271,5 @@ if HAS_DRAMATIQ:
 
         dispatcher = _DISPATCHER_RESOLVER()
         await handle_dramatiq_event(message, dispatcher)
+else:
+    default_domain_event_router = Any  # type: ignore

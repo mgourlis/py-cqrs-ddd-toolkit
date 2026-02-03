@@ -106,6 +106,7 @@ async def test_middleware_execution_order_with_registry():
     # Register them dynamically in the registry for this test
     # (Mocking the registry behavior)
     from cqrs_ddd.middleware import MiddlewareRegistry
+
     with patch.object(
         MiddlewareRegistry,
         "log",

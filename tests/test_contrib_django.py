@@ -8,6 +8,7 @@ try:
         CQRSExceptionMiddleware,
         run_outbox_worker,
     )
+
     pass
 
     HAS_DJANGO = True

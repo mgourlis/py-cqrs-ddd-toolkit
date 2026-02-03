@@ -36,7 +36,7 @@ def _resolve_cache_service(provider=None) -> Optional[CacheService]:
 def cached(
     ttl: int = 60,
     key_builder: Callable = _default_key_builder,
-    cache_service_provider: Callable[[], CacheService] = None,
+    cache_service_provider: Optional[Callable[[], CacheService]] = None,
 ):
     """
     Decorator to cache method execution results using a pluggable cache service.
@@ -84,8 +84,8 @@ def cached(
 
 
 def cache_invalidate(
-    key_builder: Callable = None,
-    cache_service_provider: Callable[[], CacheService] = None,
+    key_builder: Optional[Callable] = None,
+    cache_service_provider: Optional[Callable[[], CacheService]] = None,
 ):
     """
     Decorator to invalidate a specific cache key after successful execution.

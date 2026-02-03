@@ -97,15 +97,17 @@ class SQLAlchemyOutboxStorage(OutboxStorage):
         async def _save(session):
             self._check_dialect(session)
 
-            sql = text(f"""
+            sql = text(
+                f"""
                 INSERT INTO {self._table_name} (
-                    id, occurred_at, type, topic, payload, 
+                    id, occurred_at, type, topic, payload,
                     correlation_id, status, retries, error
                 ) VALUES (
                     :id, :occurred_at, :type, :topic, :payload,
                     :correlation_id, :status, :retries, :error
                 )
-            """)
+            """
+            )
 
             # Use flag for UUID conversion
             msg_id = str(message.id) if self._needs_uuid_str_conversion else message.id  # type: ignore
@@ -145,7 +147,7 @@ class SQLAlchemyOutboxStorage(OutboxStorage):
             # Build SQL with locking clause based on dialect
             base_sql = f"""
                 SELECT * FROM {self._table_name}
-                WHERE status = 'pending' 
+                WHERE status = 'pending'
                    OR (status = 'failed' AND retries < 5)
                 ORDER BY occurred_at ASC
                 LIMIT :batch_size
@@ -204,12 +206,14 @@ class SQLAlchemyOutboxStorage(OutboxStorage):
         async def _execute(session):
             self._check_dialect(session)
 
-            sql = text(f"""
+            sql = text(
+                f"""
                 UPDATE {self._table_name}
                 SET status = 'published',
                     processed_at = :now
                 WHERE id = :id
-            """)
+            """
+            )
 
             msg_id = str(message_id) if self._needs_uuid_str_conversion else message_id
 
@@ -232,14 +236,16 @@ class SQLAlchemyOutboxStorage(OutboxStorage):
         async def _execute(session):
             self._check_dialect(session)
 
-            sql = text(f"""
+            sql = text(
+                f"""
                 UPDATE {self._table_name}
                 SET status = 'failed',
                     retries = retries + 1,
                     error = :error,
                     processed_at = :now
                 WHERE id = :id
-            """)
+            """
+            )
 
             msg_id = str(message_id) if self._needs_uuid_str_conversion else message_id
 

@@ -21,6 +21,7 @@ except ImportError:
     def declarative_mixin(x):
         return x
 
+
 from ..persistence_dispatcher import (
     OperationPersistence,
     QueryPersistence,

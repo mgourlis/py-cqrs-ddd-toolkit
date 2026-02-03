@@ -9,6 +9,7 @@ try:
         init_cqrs,
         register_outbox_worker,
     )
+
     pass
 
     HAS_FASTAPI = True

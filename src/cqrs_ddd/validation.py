@@ -7,14 +7,15 @@ from .protocols import Validator
 T = TypeVar("T")
 
 try:
-    from pydantic import BaseModel, ValidationError
+    from pydantic import BaseModel
+    from pydantic import ValidationError as PydanticValidationError
 
     HAS_PYDANTIC = True
 except ImportError:
     HAS_PYDANTIC = False
-    BaseModel = object
+    BaseModel = object  # type: ignore
 
-    class ValidationError(Exception):
+    class PydanticValidationError(Exception):  # type: ignore
         pass
 
 
@@ -55,7 +56,7 @@ class CompositeValidator(Validator[T]):
         self.validators = validators
 
     async def validate(self, message: T) -> ValidationResult:
-        all_errors = {}
+        all_errors: Dict[str, List[str]] = {}
 
         for validator in self.validators:
             result = await validator.validate(message)

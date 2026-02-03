@@ -8,6 +8,7 @@ try:
         DramatiqWorkerConsumer,
         handle_dramatiq_event,
     )
+
     # import dramatiq
     HAS_DRAMATIQ = True
 except (ImportError, Exception):
@@ -60,7 +61,9 @@ async def test_dramatiq_publisher():
         # We mock loop.run_in_executor
         with patch("asyncio.get_running_loop") as mock_loop:
             # return_value is a mock that when called returns a coroutine that we await
-            mock_loop.return_value.run_in_executor = MagicMock(return_value=AsyncMock()())
+            mock_loop.return_value.run_in_executor = MagicMock(
+                return_value=AsyncMock()()
+            )
             await publisher.publish("topic", msg, corr_id="123")
 
             # Verify executor call

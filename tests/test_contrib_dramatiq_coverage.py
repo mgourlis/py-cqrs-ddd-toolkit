@@ -50,6 +50,7 @@ async def test_dramatiq_publisher_payload_fallbacks():
     """Cover __dict__ and raw payload branches in publish."""
     actor = MagicMock()
     actor.actor_name = "test"
+    actor.send.return_value = None
     publisher = DramatiqEventPublisher(actor)
 
     # 1. __dict__ fallback

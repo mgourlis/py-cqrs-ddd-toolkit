@@ -52,9 +52,7 @@ async def test_pydantic_saga_start_persistence():
     correlation_id = "corr-1"
 
     # 1. Start (Orchestration style mocked manually)
-    await manager._process_saga(
-        OrderSaga, correlation_id, input_data=initial_state
-    )
+    await manager._process_saga(OrderSaga, correlation_id, input_data=initial_state)
 
     # 2. Verify Persistence
     ctx = await repo.find_by_correlation_id(correlation_id, "OrderSaga")

@@ -28,8 +28,6 @@ class OutboxMessage(AbstractOutboxMessage):
     processed_at: Optional[datetime] = None
 
 
-
-
 class InMemoryOutboxStorage:
     """In-memory outbox storage for testing."""
 

@@ -58,7 +58,6 @@ class SagaRegistry:
         """Get all saga classes registered for an event type."""
         return self._event_map.get(event_type, [])
 
-
     def clear(self):
         """Clear all registrations."""
         self._event_map = {}
