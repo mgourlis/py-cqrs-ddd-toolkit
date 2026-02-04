@@ -145,6 +145,9 @@ if HAS_PYDANTIC:
         is_deleted: bool = False
         deleted_at: Any = None
 
+        # Internal event tracking
+        _domain_events: list = PrivateAttr(default_factory=list)
+
         model_config = {"validate_assignment": True, "arbitrary_types_allowed": True}
 
         @staticmethod
@@ -180,6 +183,27 @@ if HAS_PYDANTIC:
             self.is_deleted = False
             self.deleted_at = None
             self.increment_version()
+
+        def add_domain_event(self, event: Any) -> None:
+            """
+            Add a domain event to be dispatched.
+            Complements the Modification pattern.
+            """
+            self._domain_events.append(event)
+            self.increment_version()
+
+        def clear_domain_events(self) -> list:
+            """Clear and return all pending domain events."""
+            events = self._domain_events.copy()
+            self._domain_events.clear()
+            return events
+
+        def check_version(self, expected_version: int) -> None:
+            """Verify that the entity's version matches expected version."""
+            if self.version != expected_version:
+                from ..exceptions import ConcurrencyError
+
+                raise ConcurrencyError(expected=expected_version, actual=self.version)
 
     class PydanticDomainEvent(BaseModel, AbstractDomainEvent):
         """
@@ -233,6 +257,11 @@ if HAS_PYDANTIC:
             data["aggregate_type"] = self.aggregate_type
             data["aggregate_id"] = self.aggregate_id
             return data
+
+        @classmethod
+        def from_dict(cls, data: Dict[str, Any]) -> "PydanticDomainEvent":
+            """Reconstruct event from stored payload."""
+            return cls.model_validate(data)
 
 else:
     # Fallback for no Pydantic

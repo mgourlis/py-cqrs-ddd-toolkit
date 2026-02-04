@@ -234,6 +234,18 @@ class SQLAlchemyOperationPersistence(OperationPersistence[T], Generic[T]):
         elif hasattr(entity, "__dict__"):
             # Standard object / Dataclass
             data = {k: v for k, v in entity.__dict__.items() if not k.startswith("_")}
+            # Ensure standard DDD properties are included even if underscore-prefixed in __dict__
+            for attr in [
+                "id",
+                "version",
+                "created_at",
+                "updated_at",
+                "created_by",
+                "is_deleted",
+                "deleted_at",
+            ]:
+                if hasattr(entity, attr) and attr not in data:
+                    data[attr] = getattr(entity, attr)
         else:
             return entity
 
