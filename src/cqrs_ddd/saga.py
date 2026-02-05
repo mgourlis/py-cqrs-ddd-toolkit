@@ -831,6 +831,10 @@ class SagaChoreographyManager(SagaManager):
         for saga_class in saga_classes:
             await self._process_saga(saga_class, correlation_id, event=event)
 
+    async def handle(self, event: DomainEvent) -> None:
+        """Alias for handle_event to satisfy EventDispatcher requirements."""
+        await self.handle_event(event)
+
 
 class SagaOrchestratorManager(SagaManager):
     """

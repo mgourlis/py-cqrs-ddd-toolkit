@@ -140,7 +140,6 @@ if HAS_PYDANTIC:
         # Audit fields
         created_at: Any = Field(default_factory=lambda: PydanticEntity._get_time())
         updated_at: Any = None
-        created_by: Any = None
         # Soft delete
         is_deleted: bool = False
         deleted_at: Any = None
@@ -216,7 +215,6 @@ if HAS_PYDANTIC:
         occurred_at: Any = Field(
             default_factory=lambda: PydanticDomainEvent._get_time()
         )
-        user_id: Any = None
         correlation_id: Any = None
         causation_id: Any = None
         version: int = 1
@@ -496,20 +494,35 @@ class ValidationResult:
 
 if HAS_PYDANTIC:
 
-    class CommandResult(BaseModel):
-        """Standard command result response."""
+    class CommandResult(BaseModel, Generic[T]):
+        """Standard command result response payload."""
 
         success: bool = True
-        result: Any = None
+        result: Optional[T] = None
         errors: Dict[str, list] = Field(default_factory=dict)
 
     class QueryResult(BaseModel, Generic[T]):
-        """Standard query result response."""
+        """Standard query result response payload."""
 
         data: T
-        total: int = None
-        page: int = None
-        page_size: int = None
+        total: Optional[int] = None
+        page: Optional[int] = None
+        page_size: Optional[int] = None
+
+    class PydanticCommandResponse(BaseModel, Generic[T]):
+        """Pydantic-based version of CommandResponse envelope."""
+
+        result: CommandResult[T]
+        events: list = Field(default_factory=list)
+        correlation_id: Optional[str] = None
+        causation_id: Optional[str] = None
+
+    class PydanticQueryResponse(BaseModel, Generic[T]):
+        """Pydantic-based version of QueryResponse envelope."""
+
+        result: QueryResult[T]
+        correlation_id: Optional[str] = None
+        causation_id: Optional[str] = None
 
 else:
 

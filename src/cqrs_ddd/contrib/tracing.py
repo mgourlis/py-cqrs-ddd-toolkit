@@ -2,7 +2,30 @@
 
 from functools import wraps
 from contextlib import contextmanager
-from typing import Any, Callable, Dict, Protocol, runtime_checkable
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Protocol,
+    runtime_checkable,
+    Union,
+)
+
+try:
+    from typing import get_args, get_origin
+except ImportError:
+    # Fallback for very old python
+    def get_args(t):
+        return getattr(t, "__args__", [])
+
+    def get_origin(t):
+        return getattr(t, "__origin__", None)
+
+
+try:
+    from types import UnionType
+except ImportError:
+    UnionType = Union
 import logging
 
 # === Imports & Availability Checks ===
@@ -285,9 +308,51 @@ def instrument_dispatcher(persistence_dispatcher: Any):
             logger.debug(f"Instrumented {span_name}")
 
 
+def _get_type_name(t: Any) -> str:
+    """Helper to get a clean name for a type, handling Unions."""
+    origin = get_origin(t)
+    if origin in (Union, UnionType):
+        return "_".join(_get_type_name(arg) for arg in get_args(t))
+    if hasattr(t, "__name__"):
+        return t.__name__
+    return str(t)
+
+
+def trace_saga_method(name: str, op_kind: str = "saga_step"):
+    """
+    Decorator for saga methods that extracts correlation_id from self.context.
+    """
+
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(self, *args, **kwargs):
+            attributes = {
+                "messaging.system": "cqrs-ddd",
+                "messaging.operation": op_kind,
+            }
+
+            # Try to extract correlation ID from Saga context
+            if hasattr(self, "context"):
+                ctx = getattr(self, "context")
+                if hasattr(ctx, "correlation_id") and ctx.correlation_id:
+                    attributes["messaging.correlation_id"] = ctx.correlation_id
+                if hasattr(ctx, "saga_id"):
+                    attributes["saga.id"] = ctx.saga_id
+                if hasattr(ctx, "saga_type"):
+                    attributes["saga.type"] = ctx.saga_type
+
+            with _tracing_service.start_span(name, attributes=attributes):
+                return await func(self, *args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 def traced_saga(cls):
     """
     Class decorator to automatically trace methods decorated with @saga_step.
+    Also traces core lifecycle methods: start, on_timeout, compensate.
     """
     for name in dir(cls):
         if name.startswith("__"):
@@ -296,41 +361,148 @@ def traced_saga(cls):
             attr = getattr(cls, name)
             if hasattr(attr, "_saga_event_type"):
                 event_type = attr._saga_event_type
-                span_name = f"saga:{cls.__name__}.on_{event_type.__name__}"
-                setattr(cls, name, trace_span(span_name)(attr))
+                event_name = _get_type_name(event_type)
+                span_name = f"saga:{cls.__name__}.on_{event_name}"
+                setattr(cls, name, trace_saga_method(span_name)(attr))
         except Exception:
             continue
 
-    # Also trace compensation
-    if hasattr(cls, "compensate"):
-        original = getattr(cls, "compensate")
-        setattr(
-            cls, "compensate", trace_span(f"saga:{cls.__name__}.compensate")(original)
-        )
+    # Trace core lifecycle methods
+    lifecycle_methods = {
+        "start": "saga_start",
+        "on_timeout": "saga_timeout",
+        "compensate": "compensation",
+    }
+
+    for method_name, op_kind in lifecycle_methods.items():
+        if hasattr(cls, method_name):
+            original = getattr(cls, method_name)
+            span_name = f"saga:{cls.__name__}.{method_name}"
+            setattr(
+                cls,
+                method_name,
+                trace_saga_method(span_name, op_kind=op_kind)(original),
+            )
 
     return cls
 
 
 def instrument_saga_manager(saga_manager: Any):
     """
-    Instrument a SagaManager instance with tracing by wrapping its handle_event method.
+    Instrument a SagaManager instance with tracing.
+    Wraps handle_event (choreography) and run (orchestration).
     """
-    original_handle = saga_manager.handle_event
+    # 1. Instrument handle_event
+    if hasattr(saga_manager, "handle_event"):
+        original_handle = saga_manager.handle_event
 
-    @wraps(original_handle)
-    async def traced_handle(event):
-        event_type = type(event).__name__
-        span_name = f"saga_manager:handle_{event_type}"
+        @wraps(original_handle)
+        async def traced_handle(event):
+            event_type = type(event).__name__
+            span_name = f"saga_manager:handle_{event_type}"
 
-        attributes = {
-            "messaging.operation": "orchestration",
-            "messaging.destination": event_type,
-        }
-        if hasattr(event, "correlation_id") and event.correlation_id:
-            attributes["messaging.correlation_id"] = event.correlation_id
+            attributes = {
+                "messaging.operation": "choreography",
+                "messaging.destination": event_type,
+            }
+            if hasattr(event, "correlation_id") and event.correlation_id:
+                attributes["messaging.correlation_id"] = event.correlation_id
 
-        with _tracing_service.start_span(span_name, attributes=attributes):
-            return await original_handle(event)
+            with _tracing_service.start_span(span_name, attributes=attributes):
+                return await original_handle(event)
 
-    saga_manager.handle_event = traced_handle
-    logger.debug("Instrumented SagaManager.handle_event with tracing")
+        saga_manager.handle_event = traced_handle
+        logger.debug("Instrumented SagaManager.handle_event with tracing")
+
+    # 2. Instrument run
+    if hasattr(saga_manager, "run"):
+        original_run = saga_manager.run
+
+        @wraps(original_run)
+        async def traced_run(saga_class, input_data, correlation_id):
+            saga_name = saga_class.__name__
+            span_name = f"saga_manager:run_{saga_name}"
+
+            attributes = {
+                "messaging.operation": "orchestration",
+                "messaging.destination": saga_name,
+                "messaging.correlation_id": correlation_id,
+            }
+
+            with _tracing_service.start_span(span_name, attributes=attributes):
+                return await original_run(saga_class, input_data, correlation_id)
+
+        saga_manager.run = traced_run
+        logger.debug("Instrumented SagaManager.run with tracing")
+
+    # 3. Instrument maintenance methods
+    maintenance_methods = {
+        "process_timeouts": "saga_maintenance_timeouts",
+        "recover_pending_sagas": "saga_maintenance_recovery",
+    }
+
+    for method_name, op_kind in maintenance_methods.items():
+        if hasattr(saga_manager, method_name):
+            original = getattr(saga_manager, method_name)
+
+            @wraps(original)
+            async def traced_maintenance(*args, **kwargs):
+                span_name = f"saga_manager:{method_name}"
+                attributes = {
+                    "messaging.operation": op_kind,
+                }
+                with _tracing_service.start_span(span_name, attributes=attributes):
+                    return await original(*args, **kwargs)
+
+            setattr(saga_manager, method_name, traced_maintenance)
+            logger.debug(f"Instrumented SagaManager.{method_name} with tracing")
+
+
+def instrument_event_store(event_store: Any):
+    """
+    Instrument an EventStore instance with tracing.
+    Wraps append, append_batch, get_events, mark_as_undone, etc.
+    """
+    methods_to_trace = [
+        "append",
+        "append_batch",
+        "get_events",
+        "get_events_by_correlation",
+        "get_latest_events",
+        "mark_as_undone",
+    ]
+
+    # Get backend-specific system (agnostic)
+    db_system = getattr(event_store, "tracing_db_system", "generic_store")
+
+    for method_name in methods_to_trace:
+        if hasattr(event_store, method_name):
+            original = getattr(event_store, method_name)
+
+            @wraps(original)
+            async def traced_method(*args, **kwargs):
+                span_name = f"event_store:{method_name}"
+
+                attributes = {
+                    "db.system": db_system,
+                    "db.operation": method_name,
+                }
+
+                # Try to extract aggregate info from args
+                # If method is 'append', args[0] is the event
+                if method_name == "append" and len(args) > 0:
+                    event = args[0]
+                    if hasattr(event, "aggregate_type"):
+                        attributes["db.collection"] = event.aggregate_type
+                    if hasattr(event, "aggregate_id"):
+                        attributes[
+                            "db.statement"
+                        ] = f"APPEND {event.aggregate_type}:{event.aggregate_id}"
+                    if hasattr(event, "correlation_id") and event.correlation_id:
+                        attributes["messaging.correlation_id"] = event.correlation_id
+
+                with _tracing_service.start_span(span_name, attributes=attributes):
+                    return await original(*args, **kwargs)
+
+            setattr(event_store, method_name, traced_method)
+            logger.debug(f"Instrumented EventStore.{method_name} with tracing")

@@ -193,7 +193,6 @@ if HAS_SQLALCHEMY:
         updated_at: Mapped[Optional[datetime]] = mapped_column(
             DateTime(timezone=True), onupdate=func.now(), nullable=True
         )
-        created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
         # Soft Delete
         is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -240,7 +239,6 @@ class SQLAlchemyOperationPersistence(OperationPersistence[T], Generic[T]):
                 "version",
                 "created_at",
                 "updated_at",
-                "created_by",
                 "is_deleted",
                 "deleted_at",
             ]:

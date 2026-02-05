@@ -97,10 +97,12 @@ async def test_get_undo_stack_filtering():
     e1 = MagicMock(spec=StoredEvent)
     e1.is_undone = True
     e1.event_type = "E1"
+    e1.occurred_at = datetime.now(timezone.utc)
 
     e2 = MagicMock(spec=StoredEvent)
     e2.is_undone = False
     e2.event_type = "E2"
+    e2.occurred_at = datetime.now(timezone.utc)
 
     e3 = MagicMock(spec=StoredEvent)
     e3.is_undone = False
@@ -109,7 +111,6 @@ async def test_get_undo_stack_filtering():
     e3.occurred_at = datetime.now(timezone.utc)
     # Mock hydration attributes usually found on StoredEvent or added during hydration
     e3.correlation_id = "corr-1"
-    e3.user_id = "user-1"
     e3.causation_id = None
     e3.data = "valid"
 
@@ -164,7 +165,7 @@ async def test_undo_operation_success():
     with patch("cqrs_ddd.undo.EventTypeRegistry.hydrate") as mock_hydrate:
         mock_hydrate.return_value = UndoTestEvent(data="original")
 
-        result = await service.undo(event_id="evt-1", user_id="user-1")
+        result = await service.undo(event_id="evt-1")
 
         assert result.success is True
         assert "evt-1" in result.undone_events
@@ -174,7 +175,7 @@ async def test_undo_operation_success():
         mock_executor.undo.assert_called_once()
         mock_store.append.assert_called_once()  # Persist compensation
         mock_store.mark_as_undone.assert_called_once_with(
-            event_id="evt-1", undone_by="user-1", undo_event_id=result.new_events[0]
+            event_id="evt-1", undo_event_id=result.new_events[0]
         )
         service._invalidate_cache.assert_awaited()
 
@@ -236,7 +237,7 @@ async def test_redo_operation_success():
             UndoTestEvent(data="undo"),
         ]
 
-        result = await service.redo(undo_event_id="undo-1", user_id="user-1")
+        result = await service.redo(undo_event_id="undo-1")
 
         assert result.success is True
         assert len(result.redone_events) == 1
@@ -263,6 +264,7 @@ async def test_get_undo_stack_hydration_failure():
     event = MagicMock(spec=StoredEvent)
     event.event_type = "BadType"
     event.is_undone = False
+    event.occurred_at = datetime.now(timezone.utc)
 
     mock_store.get_latest_events = AsyncMock(return_value=[event])
     service.executor_registry.has_executor.return_value = True
@@ -284,6 +286,7 @@ async def test_undo_by_correlation():
     e1.event_type = "UndoTestEvent"
     e1.aggregate_type = "Agg"
     e1.aggregate_id = "1"
+    e1.occurred_at = datetime.now(timezone.utc)
     e2 = MagicMock(spec=StoredEvent)
     e2.id = 2
     e2.event_id = "e2"
@@ -291,6 +294,7 @@ async def test_undo_by_correlation():
     e2.event_type = "UndoTestEvent"
     e2.aggregate_type = "Agg"
     e2.aggregate_id = "1"
+    e2.occurred_at = datetime.now(timezone.utc)
 
     # Sorted reverse ID: e2, then e1
     mock_store.get_events_by_correlation = AsyncMock(return_value=[e1, e2])
@@ -309,7 +313,7 @@ async def test_undo_by_correlation():
     service.executor_registry.get.return_value = executor
 
     with patch("cqrs_ddd.undo.EventTypeRegistry.hydrate", return_value=UndoTestEvent()):
-        result = await service.undo(correlation_id="corr-1", user_id="u1")
+        result = await service.undo(correlation_id="corr-1")
 
         assert result.success is True
         assert result.undone_events == ["e2", "e1"]  # Reverse order

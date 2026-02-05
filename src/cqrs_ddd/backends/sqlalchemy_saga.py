@@ -1,16 +1,28 @@
-from typing import List, Optional
-from datetime import timezone
+from contextlib import asynccontextmanager
+from typing import List, Optional, Any
+from datetime import datetime, timezone
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from ..saga import SagaContext, SagaRepository
 
 
 class SQLAlchemySagaRepository(SagaRepository):
-    """SQLAlchemy implementation of SagaRepository for persistent storage."""
+    """
+    SQLAlchemy implementation of SagaRepository for persistent storage.
 
-    def __init__(self, session: AsyncSession, table_name: str = "sagas"):
+    Supports both request-scoped (session-based) and singleton-scoped (factory-based) usage.
+    """
+
+    def __init__(
+        self,
+        session: Optional[AsyncSession] = None,
+        session_factory: Optional[Any] = None,
+        table_name: str = "sagas",
+    ):
         self.session = session
+        self.session_factory = session_factory
         self.metadata = sa.MetaData()
 
         # Define table schema
@@ -35,7 +47,22 @@ class SQLAlchemySagaRepository(SagaRepository):
             sa.Column("compensations", sa.JSON),
             sa.Column("failed_compensations", sa.JSON),
             sa.Column("pending_commands", sa.JSON),
+            # Suspension Support
+            sa.Column("is_suspended", sa.Boolean, default=False),
+            sa.Column("suspend_reason", sa.String(255), nullable=True),
+            sa.Column("suspend_timeout_at", sa.DateTime(timezone=True), nullable=True),
         )
+
+    @asynccontextmanager
+    async def _get_session(self):
+        """Helper to get a session, either from self.session or self.session_factory."""
+        if self.session:
+            yield self.session
+        elif self.session_factory:
+            async with self.session_factory() as session:
+                yield session
+        else:
+            raise ValueError("Either session or session_factory must be provided")
 
     async def save(self, context: SagaContext) -> None:
         """Save or update saga context."""
@@ -58,78 +85,119 @@ class SQLAlchemySagaRepository(SagaRepository):
             "compensations": context.compensations,
             "failed_compensations": context.failed_compensations,
             "pending_commands": context.pending_commands,
+            "is_suspended": context.is_suspended,
+            "suspend_reason": context.suspend_reason,
+            "suspend_timeout_at": context.suspend_timeout_at,
         }
 
-        # Upsert logic (simplistic for generic sqlalchemy, specific dialects could use merge/upsert)
-        stmt = sa.select(self.table.c.saga_id).where(
-            self.table.c.saga_id == context.saga_id
-        )
-        result = await self.session.execute(stmt)
-        exists = result.scalar() is not None
-
-        if exists:
-            update_stmt = (
-                sa.update(self.table)
-                .where(self.table.c.saga_id == context.saga_id)
-                .values(**values)
+        async with self._get_session() as session:
+            # Upsert logic
+            stmt = sa.select(self.table.c.saga_id).where(
+                self.table.c.saga_id == context.saga_id
             )
-            await self.session.execute(update_stmt)
-        else:
-            insert_stmt = sa.insert(self.table).values(**values)
-            await self.session.execute(insert_stmt)
+            result = await session.execute(stmt)
+            exists = result.scalar() is not None
+
+            if exists:
+                update_stmt = (
+                    sa.update(self.table)
+                    .where(self.table.c.saga_id == context.saga_id)
+                    .values(**values)
+                )
+                await session.execute(update_stmt)
+            else:
+                insert_stmt = sa.insert(self.table).values(**values)
+                await session.execute(insert_stmt)
+
+            if self.session_factory:
+                await session.commit()
 
     async def load(self, saga_id: str) -> Optional[SagaContext]:
         """Load saga context by ID."""
-        stmt = sa.select(self.table).where(self.table.c.saga_id == saga_id)
-        result = await self.session.execute(stmt)
-        row = result.first()
-        if not row:
-            return None
-        return self._map_to_context(row)
+        async with self._get_session() as session:
+            stmt = sa.select(self.table).where(self.table.c.saga_id == saga_id)
+            result = await session.execute(stmt)
+            row = result.first()
+            if not row:
+                return None
+            return self._map_to_context(row)
 
     async def find_by_correlation_id(
         self, correlation_id: str, saga_type: str
     ) -> Optional[SagaContext]:
         """Find saga context by correlation ID and type."""
-        query = sa.select(self.table).where(
-            self.table.c.correlation_id == correlation_id,
-            self.table.c.saga_type == saga_type,
-        )
-        result = await self.session.execute(query)
-        row = result.first()
-        if not row:
-            return None
-        return self._map_to_context(row)
+        async with self._get_session() as session:
+            query = sa.select(self.table).where(
+                self.table.c.correlation_id == correlation_id,
+                self.table.c.saga_type == saga_type,
+            )
+            result = await session.execute(query)
+            row = result.first()
+            if not row:
+                return None
+            return self._map_to_context(row)
 
     async def find_stalled_sagas(self, limit: int = 10) -> List[SagaContext]:
         """Find sagas that are stalled."""
-        query = sa.select(self.table).where(self.table.c.is_stalled).limit(limit)
-        result = await self.session.execute(query)
-        rows = result.all()
-        return [self._map_to_context(row) for row in rows]
+        async with self._get_session() as session:
+            query = sa.select(self.table).where(self.table.c.is_stalled).limit(limit)
+            result = await session.execute(query)
+            rows = result.all()
+            return [self._map_to_context(row) for row in rows]
+
+    async def find_suspended_sagas(self, limit: int = 10) -> List[SagaContext]:
+        """Find sagas that are suspended."""
+        async with self._get_session() as session:
+            query = sa.select(self.table).where(self.table.c.is_suspended).limit(limit)
+            result = await session.execute(query)
+            rows = result.all()
+            return [self._map_to_context(row) for row in rows]
+
+    async def find_expired_suspended_sagas(self, limit: int = 10) -> List[SagaContext]:
+        """Find sagas that are suspended and have timed out."""
+        async with self._get_session() as session:
+            now = datetime.now(timezone.utc)
+            query = (
+                sa.select(self.table)
+                .where(
+                    self.table.c.is_suspended, self.table.c.suspend_timeout_at <= now
+                )
+                .limit(limit)
+            )
+            result = await session.execute(query)
+            rows = result.all()
+            return [self._map_to_context(row) for row in rows]
 
     def _map_to_context(self, row) -> SagaContext:
         # Convert row to dict
         data = dict(row._mapping)
 
         # Handle timezone conversion if necessary
-        for col in ["created_at", "updated_at", "completed_at", "failed_at"]:
+        for col in [
+            "created_at",
+            "updated_at",
+            "completed_at",
+            "failed_at",
+            "suspend_timeout_at",
+        ]:
             if data.get(col) and data[col].tzinfo is None:
                 data[col] = data[col].replace(tzinfo=timezone.utc)
 
         # Ensure new fields are present if not in DB (for migration compatibility)
-        for field in [
-            "compensations",
-            "failed_compensations",
-            "pending_commands",
-            "processed_message_ids",
-            "history",
-            "state",
-        ]:
-            if data.get(field) is None:
-                if field == "state":
-                    data[field] = {}
-                else:
-                    data[field] = []
+        default_fields = {
+            "compensations": [],
+            "failed_compensations": [],
+            "pending_commands": [],
+            "processed_message_ids": [],
+            "history": [],
+            "state": {},
+            "is_suspended": False,
+            "suspend_reason": None,
+            "suspend_timeout_at": None,
+        }
+
+        for field_name, default_value in default_fields.items():
+            if data.get(field_name) is None:
+                data[field_name] = default_value
 
         return SagaContext(**data)

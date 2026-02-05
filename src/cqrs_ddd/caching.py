@@ -51,7 +51,7 @@ def cached(
 
     Usage:
         @cached(ttl=300)
-        async def get_user_profile(user_id: int):
+        async def get_profile(profile_id: int):
             ...
     """
 

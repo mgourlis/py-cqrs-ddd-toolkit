@@ -193,33 +193,31 @@ async def test_event_persistence_flow():
     middleware = EventStorePersistenceMiddleware(event_store=mock_event_store)
 
     command = SimpleCommand(command_id="cmd-1")
-    # Simulate handler return a CommandResponse with events
-    result_obj = CommandResponse(result="ok", events=["event1"])
+    # Simulate handler return a CommandResponse with events and IDs (as Mediator would do)
+    result_obj = CommandResponse(
+        result="ok",
+        events=["event1"],
+        correlation_id="mock-corr-id",
+        causation_id="cmd-1",
+    )
     handler = AsyncMock(return_value=result_obj)
 
-    # We also need to patch generate_correlation_id since it will be called if missing
+    # We also need to patch enrich_event_metadata to return something we can assert on
     with patch(
-        "cqrs_ddd.event_store.generate_correlation_id", return_value="gen-corr-id"
+        "cqrs_ddd.domain_event.enrich_event_metadata", side_effect=lambda e, **k: e
     ):
-        # We also need to patch enrich_event_metadata to return something we can assert on
-        with patch(
-            "cqrs_ddd.domain_event.enrich_event_metadata", side_effect=lambda e, **k: e
-        ):
-            wrapped = middleware.apply(handler, command)
-            result = await wrapped()
+        wrapped = middleware.apply(handler, command)
+        result = await wrapped()
 
-            # 1. Verify correlation ID was generated and set on command
-            assert command.correlation_id == "gen-corr-id"
+        # 1. Verify IDs propagated to result (returned as-is from handler)
+        assert result.correlation_id == "mock-corr-id"
+        assert result.causation_id == "cmd-1"
 
-            # 2. Verify IDs propagated to result
-            assert result.correlation_id == "gen-corr-id"
-            assert result.causation_id == "cmd-1"
-
-            # 3. Verify event store append called
-            mock_event_store.append_batch.assert_awaited_once()
-            args, kwargs = mock_event_store.append_batch.call_args
-            assert args[0] == ["event1"]  # enirched events
-            assert kwargs["correlation_id"] == "gen-corr-id"
+        # 2. Verify event store append called
+        mock_event_store.append_batch.assert_awaited_once()
+        args, kwargs = mock_event_store.append_batch.call_args
+        assert args[0] == ["event1"]  # enirched events
+        assert kwargs["correlation_id"] == "mock-corr-id"
 
 
 # --- Middleware Registry Tests ---
@@ -395,7 +393,8 @@ async def test_event_store_persistence_error_handling():
             "cqrs_ddd.domain_event.enrich_event_metadata", side_effect=lambda e, **k: e
         ):
             wrapped2 = middleware2.apply(handler, SimpleCommand())
-            await wrapped2()
+            with pytest.raises(Exception, match="DB fail"):
+                await wrapped2()
             mock_logger2.error.assert_called()
 
 

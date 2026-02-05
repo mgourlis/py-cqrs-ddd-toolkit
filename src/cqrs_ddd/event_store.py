@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import logging
 
-from .domain_event import DomainEventBase, generate_correlation_id
+from .domain_event import DomainEventBase
 from .protocols import EventStore, UndoService  # noqa: F401
 
 logger = logging.getLogger(__name__)
@@ -31,14 +31,12 @@ class StoredEvent:
         event_type: Class name of the event
         event_version: Schema version of the event
         occurred_at: Timestamp when event happened
-        user_id: ID of variable user who triggered the command
         correlation_id: ID linking cascading events
         causation_id: ID of the command/event that caused this
         payload: The actual event data (serialized)
         aggregate_version: Version of the aggregate AFTER this event
         is_undone: Flag for soft-undo
         undone_at: Timestamp when undone
-        undone_by: User who performed undo
         undo_event_id: ID of the undo event
     """
 
@@ -49,14 +47,12 @@ class StoredEvent:
     event_type: str
     event_version: int
     occurred_at: datetime
-    user_id: Optional[str]
     correlation_id: Optional[str]
     causation_id: Optional[str]
     payload: Dict[str, Any]
     aggregate_version: int
     is_undone: bool = False
     undone_at: Optional[datetime] = None
-    undone_by: Optional[str] = None
     undo_event_id: Optional[str] = None
 
 
@@ -81,42 +77,36 @@ class EventStoreMiddleware:
             ...
     """
 
-    def __init__(self, event_store: EventStore, get_user_id: Optional[callable] = None):
+    def __init__(self, event_store: EventStore):
         """
         Initialize the middleware.
 
         Args:
             event_store: The event store to persist to
-            get_user_id: Optional callable to get current user ID
         """
         self.event_store = event_store
-        self.get_user_id = get_user_id
 
     def apply(self, handler_func, command):
         """Wrap handler to persist events."""
 
         async def wrapped_handler(*args, **kwargs):
-            # Generate correlation ID for this command
-            correlation_id = generate_correlation_id()
-
-            # Get current user
-            user_id = self.get_user_id() if self.get_user_id else None
-
             # Execute handler
             result = await handler_func(*args, **kwargs)
 
             # Persist events if present
             if hasattr(result, "events") and result.events:
-                events_to_persist = []
+                from .domain_event import enrich_event_metadata
 
-                for event in result.events:
-                    # Enrich event with context
-                    if hasattr(event, "correlation_id") and not event.correlation_id:
-                        event.correlation_id = correlation_id
-                    if hasattr(event, "user_id") and not event.user_id:
-                        event.user_id = user_id
+                # Use IDs from the response (guaranteed by Mediator)
+                correlation_id = getattr(result, "correlation_id", None)
+                causation_id = getattr(result, "causation_id", None)
 
-                    events_to_persist.append(event)
+                events_to_persist = [
+                    enrich_event_metadata(
+                        event, correlation_id=correlation_id, causation_id=causation_id
+                    )
+                    for event in result.events
+                ]
 
                 # Persist all events
                 await self.event_store.append_batch(
@@ -139,6 +129,8 @@ class InMemoryEventStore(EventStore):
 
     NOT for production use - events are lost on restart.
     """
+
+    tracing_db_system = "in_memory"
 
     def __init__(self):
         self._events: List[StoredEvent] = []
@@ -183,7 +175,6 @@ class InMemoryEventStore(EventStore):
             event_type=event.event_type,
             event_version=event.version,
             occurred_at=event.occurred_at,
-            user_id=event.user_id,
             correlation_id=event.correlation_id,
             causation_id=event.causation_id,
             payload=event.to_dict(),
@@ -278,13 +269,12 @@ class InMemoryEventStore(EventStore):
         return results[:count]
 
     async def mark_as_undone(
-        self, event_id: str, undone_by: str, undo_event_id: Optional[str] = None
+        self, event_id: str, undo_event_id: Optional[str] = None
     ) -> None:
         for event in self._events:
             if event.event_id == event_id:
                 event.is_undone = True
                 event.undone_at = datetime.now(timezone.utc)
-                event.undone_by = undone_by
                 event.undo_event_id = undo_event_id
                 break
 
@@ -294,7 +284,6 @@ class InMemoryEventStore(EventStore):
             if event.event_id == event_id:
                 event.is_undone = False
                 event.undone_at = None
-                event.undone_by = None
                 event.undo_event_id = None
                 break
 

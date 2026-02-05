@@ -42,9 +42,9 @@ class CQRSRouter:
     Router that auto-creates endpoints for commands and queries.
 
     Usage:
-        router = CQRSRouter(container=container, prefix="/api/v1")
+        router = CQRSRouter(container=container, prefix="/api/v1", tags=["Users"])
 
-        router.command("/users", CreateUser, response_model=UserResponse)
+        router.command("/users", CreateUser, response_model=UserResponse, tags=["Onboarding"])
         router.query("/users/{id}", GetUser, response_model=UserResponse)
 
         app.include_router(router.router)
@@ -81,13 +81,18 @@ class CQRSRouter:
         command_class: Type[Any],
         response_model: Optional[Type[Any]] = None,
         status_code: int = 200,
+        tags: Optional[list[str]] = None,
         response_mapper: Optional[Callable[[Any], Any]] = None,
         **kwargs: Any,
     ):
         """Register a command endpoint."""
 
         @self.router.post(
-            path, response_model=response_model, status_code=status_code, **kwargs
+            path,
+            response_model=response_model,
+            status_code=status_code,
+            tags=tags,
+            **kwargs,
         )
         async def command_endpoint(
             cmd: command_class,  # type: ignore
@@ -105,12 +110,13 @@ class CQRSRouter:
         path: str,
         query_class: Type[Any],
         response_model: Optional[Type[Any]] = None,
+        tags: Optional[list[str]] = None,
         response_mapper: Optional[Callable[[Any], Any]] = None,
         **kwargs: Any,
     ):
         """Register a query endpoint."""
 
-        @self.router.get(path, response_model=response_model, **kwargs)
+        @self.router.get(path, response_model=response_model, tags=tags, **kwargs)
         async def query_endpoint(
             query: query_class = Depends(),  # type: ignore
             mediator: Mediator = Depends(self._mediator_dep),

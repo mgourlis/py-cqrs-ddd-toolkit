@@ -122,6 +122,89 @@ class LocalFileSystemStorage(StorageService):
             # Fallback for older versions
             return await asyncio.to_thread(os.listdir, full_path)
 
+    async def get_mime_type(self, path: str) -> Optional[str]:
+        """Get MIME type of file using python-magic (content) or mimetypes (name)."""
+        full_path = self._resolve_path(path)
+
+        # Try content-based detection first
+        try:
+            import magic
+
+            # libmagic is synchronous, call in thread pool
+            mime_type = await asyncio.to_thread(magic.from_file, full_path, mime=True)
+            if mime_type:
+                return mime_type
+        except (ImportError, Exception):
+            pass
+
+        # Fallback to extension-based guessing
+        import mimetypes
+
+        mime_type, _ = mimetypes.guess_type(path)
+        return mime_type
+
+    async def merge(
+        self,
+        source_dir: str,
+        target_path: str,
+        extension: Optional[str] = None,
+        delete_source: bool = False,
+    ) -> str:
+        """Merge chunks from a directory into a single file."""
+        full_source_dir = self._resolve_path(source_dir)
+
+        final_filename = os.path.basename(target_path)
+        if extension:
+            final_filename = f"{final_filename}.{extension.lstrip('.')}"
+
+        full_target_path = self._resolve_path(
+            os.path.join(os.path.dirname(target_path), final_filename)
+        )
+
+        if not await aiofiles.os.exists(full_source_dir):
+            raise FileNotFoundError(f"Source directory not found: {source_dir}")
+
+        entries = await aiofiles.os.listdir(full_source_dir)
+        # Assuming chunks are named by their index (0, 1, 2...)
+        # We sort them numerically if possible, otherwise lexicographically
+        try:
+            chunk_files = sorted(entries, key=int)
+        except ValueError:
+            chunk_files = sorted(entries)
+
+        await aiofiles.os.makedirs(os.path.dirname(full_target_path), exist_ok=True)
+
+        # Write to temp first for atomicity
+        tmp_target = f"{full_target_path}.merge.tmp"
+
+        async with aiofiles.open(tmp_target, "wb") as final_file:
+            for chunk_file in chunk_files:
+                chunk_path = os.path.join(full_source_dir, chunk_file)
+                async with aiofiles.open(chunk_path, "rb") as f:
+                    # Stream chunk to target
+                    while True:
+                        chunk_data = await f.read(1024 * 1024)  # 1MB buffer
+                        if not chunk_data:
+                            break
+                        await final_file.write(chunk_data)
+
+        # Atomic move
+        await aiofiles.os.rename(tmp_target, full_target_path)
+
+        if delete_source:
+            # Recursive delete
+            for chunk_file in chunk_files:
+                await aiofiles.os.remove(os.path.join(full_source_dir, chunk_file))
+            try:
+                await aiofiles.os.rmdir(full_source_dir)
+            except OSError:
+                pass
+
+        # Return relative path if we have root_path, else absolute
+        if self.root_path and full_target_path.startswith(self.root_path):
+            return os.path.relpath(full_target_path, self.root_path)
+        return full_target_path
+
 
 # =============================================================================
 # S3 Storage (AWS)
@@ -225,6 +308,95 @@ class S3Storage(StorageService):
                             continue
                         files.append(key)
             return files
+
+    async def get_mime_type(self, path: str) -> Optional[str]:
+        async with self.session.create_client("s3", **self.config) as client:
+            try:
+                response = await client.head_object(Bucket=self.bucket, Key=path)
+                return response.get("ContentType")
+            except Exception:
+                # Fallback to guessing if head_object fails
+                import mimetypes
+
+                mime_type, _ = mimetypes.guess_type(path)
+                return mime_type
+
+    async def merge(
+        self,
+        source_dir: str,
+        target_path: str,
+        extension: Optional[str] = None,
+        delete_source: bool = False,
+    ) -> str:
+        """
+        Merge chunks in S3 using server-side copy (zero-download).
+
+        This uses Multipart Upload + UploadPartCopy to combine objects
+        directly within S3 without downloading them to the application server.
+        """
+        chunks = await self.list(source_dir)
+        if not chunks:
+            raise FileNotFoundError(f"No chunks found in {source_dir}")
+
+        # Sort numerically if possible
+        try:
+            sorted_chunks = sorted(chunks, key=lambda x: int(os.path.basename(x)))
+        except ValueError:
+            sorted_chunks = sorted(chunks)
+
+        final_key = target_path
+        if extension:
+            final_key = f"{final_key}.{extension.lstrip('.')}"
+
+        async with self.session.create_client("s3", **self.config) as client:
+            # 1. Initiate Multipart Upload
+            response = await client.create_multipart_upload(
+                Bucket=self.bucket, Key=final_key
+            )
+            upload_id = response["UploadId"]
+
+            parts = []
+            try:
+                # 2. Copy parts server-side
+                for i, chunk_key in enumerate(sorted_chunks, start=1):
+                    # S3 CopySource must include bucket
+                    copy_source = f"{self.bucket}/{chunk_key}"
+
+                    part_resp = await client.upload_part_copy(
+                        Bucket=self.bucket,
+                        Key=final_key,
+                        CopySource=copy_source,
+                        PartNumber=i,
+                        UploadId=upload_id,
+                    )
+                    parts.append(
+                        {"PartNumber": i, "ETag": part_resp["CopyPartResult"]["ETag"]}
+                    )
+
+                # 3. Complete Upload
+                await client.complete_multipart_upload(
+                    Bucket=self.bucket,
+                    Key=final_key,
+                    UploadId=upload_id,
+                    MultipartUpload={"Parts": parts},
+                )
+
+                # 4. Efficient Batch Delete source chunks
+                if delete_source:
+                    # S3 can delete up to 1000 objects in one go
+                    delete_keys = [{"Key": k} for k in sorted_chunks]
+                    await client.delete_objects(
+                        Bucket=self.bucket,
+                        Delete={"Objects": delete_keys, "Quiet": True},
+                    )
+            except Exception:
+                # Cleanup on failure
+                await client.abort_multipart_upload(
+                    Bucket=self.bucket, Key=final_key, UploadId=upload_id
+                )
+                raise
+
+        return final_key
 
 
 # =============================================================================
@@ -360,6 +532,52 @@ class DropboxStorage(StorageService):
             data = resp.json()
             return [entry["name"] for entry in data.get("entries", [])]
 
+    async def get_mime_type(self, path: str) -> Optional[str]:
+        # Dropbox get_metadata doesn't return MIME type usually.
+        # Fallback to guessing from extension.
+        import mimetypes
+
+        mime_type, _ = mimetypes.guess_type(path)
+        return mime_type
+
+    async def merge(
+        self,
+        source_dir: str,
+        target_path: str,
+        extension: Optional[str] = None,
+        delete_source: bool = False,
+    ) -> str:
+        """
+        Merge chunks in Dropbox.
+        Downloads all chunks, concatenates them, and uploads the final result.
+        """
+        chunks = await self.list(source_dir)
+        # Sort numerically if possible
+        try:
+            sorted_chunks = sorted(chunks, key=lambda x: int(os.path.basename(x)))
+        except ValueError:
+            sorted_chunks = sorted(chunks)
+
+        final_path = target_path
+        if extension:
+            final_path = f"{final_path}.{extension.lstrip('.')}"
+
+        combined_content = b""
+        for chunk_name in sorted_chunks:
+            # list() returns just names, we need full path relative to root_path
+            chunk_path = os.path.join(source_dir, chunk_name)
+            content = await self.read(chunk_path)
+            if content:
+                combined_content += content
+
+        await self.save(final_path, combined_content, overwrite=True)
+
+        if delete_source:
+            # In Dropbox, deleting the directory is atomic and efficient
+            await self.delete(source_dir)
+
+        return final_path
+
 
 # =============================================================================
 # Google Cloud Storage (GCS)
@@ -443,3 +661,80 @@ class GoogleCloudStorage(StorageService):
                 return keys
             except Exception:
                 return []
+
+    async def get_mime_type(self, path: str) -> Optional[str]:
+        async with self.Storage(
+            service_file=self.service_file, token=self.token
+        ) as client:
+            try:
+                metadata = await client.download_metadata(self.bucket, path)
+                return metadata.get("contentType")
+            except Exception:
+                import mimetypes
+
+                mime_type, _ = mimetypes.guess_type(path)
+                return mime_type
+
+    async def merge(
+        self,
+        source_dir: str,
+        target_path: str,
+        extension: Optional[str] = None,
+        delete_source: bool = False,
+    ) -> str:
+        """
+        Merge chunks in GCS using server-side compose (zero-download).
+
+        This uses the GCS Compose API to combine up to 32 objects at a time
+        natively within Google Cloud Storage.
+        """
+        chunks = await self.list(source_dir)
+        if not chunks:
+            raise FileNotFoundError(f"No chunks found in {source_dir}")
+
+        # Sort numerically if possible
+        try:
+            sorted_chunks = sorted(
+                chunks, key=lambda x: int(os.path.basename(x).split("/")[-1])
+            )
+        except ValueError:
+            sorted_chunks = sorted(chunks)
+
+        final_path = target_path
+        if extension:
+            final_path = f"{final_path}.{extension.lstrip('.')}"
+
+        async with self.Storage(
+            service_file=self.service_file, token=self.token
+        ) as client:
+            # GCS Compose supports up to 32 source objects.
+            MAX_COMPOSE_SOURCES = 32
+
+            if len(sorted_chunks) <= MAX_COMPOSE_SOURCES:
+                await client.compose(self.bucket, sorted_chunks, final_path)
+            else:
+                # Multi-batch compose for more than 32 chunks
+                current_batch = sorted_chunks[:MAX_COMPOSE_SOURCES]
+                await client.compose(self.bucket, current_batch, final_path)
+
+                remaining = sorted_chunks[MAX_COMPOSE_SOURCES:]
+                while remaining:
+                    # In subsequent calls, include the current final_path as the first source
+                    batch = remaining[: MAX_COMPOSE_SOURCES - 1]
+                    await client.compose(self.bucket, [final_path] + batch, final_path)
+                    remaining = remaining[MAX_COMPOSE_SOURCES - 1 :]
+
+            if delete_source:
+                # GCS composed objects usually need their sources deleted.
+                # If source_dir is used as a prefix, we should list and delete everything.
+                # For now, deleting the specific chunks known to us.
+                for chunk_key in sorted_chunks:
+                    await client.delete(self.bucket, chunk_key)
+
+                # Try to delete the directory-like object if it exists (some tools create it)
+                try:
+                    await client.delete(self.bucket, source_dir.rstrip("/") + "/")
+                except Exception:
+                    pass
+
+        return final_path

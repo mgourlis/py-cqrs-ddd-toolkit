@@ -38,7 +38,6 @@ def test_entity_initialization():
     assert user.version == 0
     assert isinstance(user.created_at, datetime)
     assert user.updated_at is None
-    assert user.created_by is None
     assert user.is_deleted is False
     assert user.deleted_at is None
     assert user.username == "alice"
@@ -51,7 +50,6 @@ def test_entity_initialization_with_values():
         entity_id="user-123",
         version=5,
         created_at=now,
-        created_by="admin",
         is_deleted=True,
         deleted_at=now,
     )
@@ -59,7 +57,6 @@ def test_entity_initialization_with_values():
     assert user.id == "user-123"
     assert user.version == 5
     assert user.created_at == now
-    assert user.created_by == "admin"
     assert user.is_deleted is True
     assert user.deleted_at == now
 

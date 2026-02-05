@@ -67,7 +67,7 @@ The toolkit provides base classes that enforce DDD best practices while automati
 
 *   **Identity-Based**: Compared by `id` (UUID4 by default).
 *   **Optimistic Concurrency**: Every state change increments a `version` field. The `PersistenceDispatcher` checks this version during save to prevent stale writes.
-*   **Auditability**: Built-in `created_at`, `updated_at`, `created_by` fields.
+*   **Auditability**: Built-in `created_at`, `updated_at` fields.
 *   **Lifecycle Management**: Native support for **Soft Delete** (`soft_delete`, `restore`).
 
 ```python
@@ -819,40 +819,129 @@ Unlike traditional ACID transactions, Sagas use **Compensating Transactions** to
 - **Automatic Compensation**: If a step raises an exception, `compensate()` is triggered.
 - **Stalled Recovery**: The `recover_pending_sagas` method (and `find_stalled_sagas` repository method) allows resuming sagas that crashed mid-dispatch.
 
-#### Example: Type-Safe Order Saga (Pydantic)
+#### Example: Type-Safe Booking Saga
 
 ```python
-from cqrs_ddd.contrib.pydantic import PydanticSaga, PydanticDomainEvent
+from dataclasses import dataclass, field
+from typing import Optional
+from cqrs_ddd.saga import Saga, saga_step
+from cqrs_ddd.contrib.tracing import traced_saga
+# 1. Define your persistent state
+@dataclass
+class BookingState:
+    user_id: str
+    room_id: Optional[str] = None
+    flight_id: Optional[str] = None
+    payment_id: Optional[str] = None
+    total_cost: float = 0.0
+@traced_saga
+class BookingSaga(Saga[BookingState]):  # 2. Pass the state type to the Saga
+    """
+    Coordinates travel bookings with persistent state and LIFO compensation.
+    """
+    @saga_step(BookingStarted)
+    async def on_started(self, event: BookingStarted):
+        # Initialize state from event
+        self._state.user_id = event.user_id
+
+        # Step 1: Reserve Room
+        room_id = f"R-{event.booking_id}"
+        await self.mediator.send(ReserveRoomCommand(room_id=room_id))
+
+        # Register Compensation (Undo Step 1)
+        self.add_compensation(CancelRoomCommand(room_id=room_id))
+
+        # 3. Update State (Persisted automatically after the step)
+        self._state.room_id = room_id
+    @saga_step(RoomReserved)
+    async def on_room_reserved(self, event: RoomReserved):
+        # Use state data from the previous step
+        user_id = self._state.user_id
+
+        # Step 2: Book Flight
+        flight_id = f"F-{event.room_id}"
+        await self.mediator.send(BookFlightCommand(user_id=user_id, flight_id=flight_id))
+
+        # Register Compensation (Undo Step 2)
+        self.add_compensation(CancelFlightCommand(flight_id=flight_id))
+
+        # Update State
+        self._state.flight_id = flight_id
+        self._state.total_cost += event.price
+    @saga_step(FlightBooked)
+    async def on_flight_booked(self, event: FlightBooked):
+        # Final Step: Payment
+        # If this fails, CancelFlight runs first, then CancelRoom.
+        await self.mediator.send(ProcessPaymentCommand(
+            user_id=self._state.user_id,
+            amount=self._state.total_cost
+        ))
+
+        self.complete()
+```
+
+#### Example: Type-Safe Booking Saga (Pydantic)
+
+```python
+from pydantic import BaseModel, Field
+from typing import Optional
+from cqrs_ddd.contrib.pydantic import PydanticSaga, PydanticDomainEvent, PydanticCommand
 from cqrs_ddd.saga import saga_step
-from pydantic import BaseModel
+from cqrs_ddd.contrib.tracing import traced_saga
+# 1. Define Pydantic Events
+class BookingStarted(PydanticDomainEvent):
+    user_id: str
+    booking_id: str
 
-class OrderState(BaseModel):
-    order_id: str = ""
-    status: str = "pending"
+    # Required for PydanticDomainEvent
+    @property
+    def aggregate_id(self): return self.booking_id
+# 2. Define Pydantic State
+class BookingState(BaseModel):
+    user_id: str
+    room_id: Optional[str] = None
+    flight_id: Optional[str] = None
+    total_cost: float = 0.0
+# 3. Define the Saga
+@traced_saga
+class BookingSaga(PydanticSaga[BookingState]):
+    # Crucial: Tell the saga which model to use for self._state
+    state_model = BookingState
+    @saga_step(BookingStarted)
+    async def on_started(self, event: BookingStarted):
+        # State is already a Pydantic model
+        self._state.user_id = event.user_id
 
-class OrderSaga(PydanticSaga[OrderState]):
-    state_model = OrderState
+        room_id = f"R-{event.booking_id}"
+        await self.mediator.send(ReserveRoomCommand(room_id=room_id))
 
-    @saga_step(OrderCreated)
-    async def on_order_created(self, event: OrderCreated):
-        """Step 1: Init state and trigger payment."""
-        self.state.order_id = event.order_id
-        self.dispatch_command(ProcessPayment(amount=event.total))
+        # Add compensation
+        self.add_compensation(CancelRoomCommand(room_id=room_id))
 
-    @saga_step(PaymentProcessed)
-    async def on_payment(self, event: PaymentProcessed):
-        """Step 2: Complete or Comp."""
-        if event.success:
-            self.state.status = "paid"
-            self.dispatch_command(ShipOrder(order_id=self.state.order_id))
-            self.complete()
-        else:
-            raise ValueError("Payment Failed") # Triggers compensate()
+        self._state.room_id = room_id
+    @saga_step(RoomReserved)
+    async def on_room_reserved(self, event: RoomReserved):
+        # State access is type-safe and validated
+        flight_id = f"F-{self._state.room_id}"
 
-    async def compensate(self):
-        """Rollback: Cancel order."""
-        self.dispatch_command(CancelOrder(order_id=self.state.order_id))
+        await self.mediator.send(BookFlightCommand(
+            user_id=self._state.user_id,
+            flight_id=flight_id
+        ))
 
+        # Add compensation for the second step
+        self.add_compensation(CancelFlightCommand(flight_id=flight_id))
+
+        self._state.flight_id = flight_id
+        self._state.total_cost += event.price
+    @saga_step(FlightBooked)
+    async def on_flight_booked(self, event: FlightBooked):
+        # Final step: Payment
+        await self.mediator.send(ProcessPaymentCommand(
+            amount=self._state.total_cost
+        ))
+
+        self.complete()
 ```
 
 ### Human-in-the-Loop (HitL) & Timeouts

@@ -355,24 +355,9 @@ class CommandResponse(Generic[TResult]):
     correlation_id: Optional[str] = None
     causation_id: Optional[str] = None
 
-    @property
-    def response(self) -> TResult:
-        """Alias for result (backward compatibility)."""
-        return self.result
-
-    @property
-    def domain_events(self) -> List[Any]:
-        """Alias for events (backward compatibility)."""
-        return self.events
-
 
 @dataclass
 class QueryResponse(Generic[TResult]):
     """Response from a query handler."""
 
     result: TResult
-
-    @property
-    def response(self) -> TResult:
-        """Alias for result (backward compatibility)."""
-        return self.result

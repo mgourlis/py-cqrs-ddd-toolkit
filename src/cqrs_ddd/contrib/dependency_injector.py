@@ -166,7 +166,7 @@ class Container(containers.DeclarativeContainer):
         "cqrs_ddd.saga.SagaChoreographyManager",
         repository=saga_repository,
         mediator=mediator,
-        saga_registry=None,
+        saga_registry=saga_registry,
         lock_strategy=lock_strategy,
     )
 
@@ -175,7 +175,7 @@ class Container(containers.DeclarativeContainer):
         "cqrs_ddd.saga.SagaOrchestratorManager",
         repository=saga_repository,
         mediator=mediator,
-        saga_registry=None,
+        saga_registry=saga_registry,
         lock_strategy=lock_strategy,
     )
 

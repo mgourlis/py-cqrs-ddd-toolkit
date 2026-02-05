@@ -17,7 +17,6 @@ class MutableEvent:
     data: str
     correlation_id: str = None
     causation_id: str = None
-    user_id: str = None
 
 
 class FrozenEvent:
@@ -30,7 +29,7 @@ class FrozenEvent:
         if item in self._kwargs:
             return self._kwargs[item]
         # Simulate optional metadata fields existing but being None
-        if item in ("correlation_id", "causation_id", "user_id"):
+        if item in ("correlation_id", "causation_id"):
             return None
         raise AttributeError(f"'FrozenEvent' object has no attribute '{item}'")
 
@@ -52,7 +51,7 @@ class PydanticEvent:
     def __getattr__(self, item):
         if item in self._kwargs:
             return self._kwargs[item]
-        if item in ("correlation_id", "causation_id", "user_id"):
+        if item in ("correlation_id", "causation_id"):
             return None
         raise AttributeError(f"'PydanticEvent' object has no attribute '{item}'")
 
@@ -82,11 +81,10 @@ def test_id_generation():
 
 def test_enrich_mutable():
     evt = MutableEvent(data="test")
-    enriched = enrich_event_metadata(evt, correlation_id="corr-1", user_id="user-1")
+    enriched = enrich_event_metadata(evt, correlation_id="corr-1")
 
     assert enriched is evt  # Same instance
     assert evt.correlation_id == "corr-1"
-    assert evt.user_id == "user-1"
     assert evt.causation_id is None  # Not set
 
 

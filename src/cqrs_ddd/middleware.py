@@ -256,70 +256,50 @@ class EventStorePersistenceMiddleware(Middleware):
         logger = logging.getLogger("cqrs_ddd")
 
         async def wrapped_handler(*args, **kwargs):
-            # Step 1: Generate correlation_id
-            from .event_store import generate_correlation_id
-
-            correlation_id = getattr(command, "correlation_id", None)
-            causation_id = getattr(command, "command_id", None)
-
-            if not correlation_id:
-                correlation_id = generate_correlation_id()
-                try:
-                    command.correlation_id = correlation_id
-                except (AttributeError, TypeError):
-                    pass
-
-            # Step 2: Execute handler
+            # Execute handler
             result = await handler_func(*args, **kwargs)
 
-            # Step 2a: Propagate IDs
-            if hasattr(result, "correlation_id") and not result.correlation_id:
-                try:
-                    result.correlation_id = correlation_id
-                except (AttributeError, TypeError):
-                    pass
-            if hasattr(result, "causation_id") and not result.causation_id:
-                try:
-                    result.causation_id = causation_id
-                except (AttributeError, TypeError):
-                    pass
+            # Extract events
+            events = getattr(result, "events", [])
+            if not events:
+                return result
 
-            # Step 3: Extract events
-            events = []
-            if hasattr(result, "events") and result.events:
-                events = result.events
+            # Persist events
+            event_store = self._event_store
+            if not event_store:
+                logger.warning(
+                    "EventStorePersistenceMiddleware: No event store provided, skipping persistence"
+                )
+                return result
 
-            # Step 4: Persist events
-            if events:
-                event_store = self._event_store
+            from .domain_event import enrich_event_metadata
 
-                if not event_store:
-                    logger.warning(
-                        "EventStorePersistenceMiddleware: No event store provided, skipping persistence"
-                    )
-                    return result
+            # Use IDs from the response (now guaranteed to be populated by Mediator)
+            correlation_id = getattr(result, "correlation_id", None)
+            causation_id = getattr(result, "causation_id", None)
 
-                from .domain_event import enrich_event_metadata
+            enriched_events = [
+                enrich_event_metadata(
+                    event, correlation_id=correlation_id, causation_id=causation_id
+                )
+                for event in events
+            ]
 
-                enriched_events = [
-                    enrich_event_metadata(
-                        event, correlation_id=correlation_id, causation_id=causation_id
-                    )
-                    for event in events
-                ]
-
-                try:
-                    logger.debug(
-                        f"EventStorePersistenceMiddleware: Appending batch of {len(enriched_events)} events"
-                    )
-                    await event_store.append_batch(
-                        enriched_events, correlation_id=correlation_id
-                    )
-                    logger.debug(
-                        f"Persisted {len(enriched_events)} events with correlation_id={correlation_id}"
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to persist events: {e}")
+            try:
+                logger.debug(
+                    f"EventStorePersistenceMiddleware: Appending batch of {len(enriched_events)} events"
+                )
+                await event_store.append_batch(
+                    enriched_events, correlation_id=correlation_id
+                )
+                logger.debug(
+                    f"Persisted {len(enriched_events)} events with correlation_id={correlation_id}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"EventStorePersistenceMiddleware: Persistence failed: {e}"
+                )
+                raise
 
             return result
 

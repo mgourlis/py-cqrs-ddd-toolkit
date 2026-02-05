@@ -38,7 +38,10 @@ async def engine():
                 is_stalled BOOLEAN DEFAULT FALSE,
                 compensations JSON,
                 failed_compensations JSON,
-                pending_commands JSON
+                pending_commands JSON,
+                is_suspended BOOLEAN DEFAULT FALSE,
+                suspend_reason VARCHAR(255),
+                suspend_timeout_at TIMESTAMP
             )
         """
             )

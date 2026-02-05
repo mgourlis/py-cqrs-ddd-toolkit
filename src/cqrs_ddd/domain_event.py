@@ -36,7 +36,6 @@ def enrich_event_metadata(
     event: Any,
     correlation_id: Optional[str] = None,
     causation_id: Optional[str] = None,
-    user_id: Optional[str] = None,
 ) -> Any:
     """
     Safely enrich an event with metadata, supporting both mutable and frozen objects.
@@ -56,8 +55,6 @@ def enrich_event_metadata(
         and not getattr(event, "causation_id")
     ):
         updates["causation_id"] = causation_id
-    if user_id and hasattr(event, "user_id") and not getattr(event, "user_id"):
-        updates["user_id"] = user_id
 
     if not updates:
         return event
@@ -119,9 +116,6 @@ class DomainEventBase(AbstractDomainEvent):
     # When the event occurred
     occurred_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
-    # Who triggered the event
-    user_id: Optional[str] = None
-
     # Groups related events (e.g., all events from one command)
     correlation_id: Optional[str] = None
 
@@ -151,7 +145,6 @@ class DomainEventBase(AbstractDomainEvent):
         return {
             "event_id": self.event_id,
             "occurred_at": self.occurred_at.isoformat() if self.occurred_at else None,
-            "user_id": self.user_id,
             "correlation_id": self.correlation_id,
             "causation_id": self.causation_id,
             "version": self.version,

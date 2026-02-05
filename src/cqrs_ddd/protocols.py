@@ -186,6 +186,31 @@ class StorageService(Protocol):
         """List files in directory."""
         ...
 
+    async def get_mime_type(self, path: str) -> Optional[str]:
+        """Get MIME type of file."""
+        ...
+
+    async def merge(
+        self,
+        source_dir: str,
+        target_path: str,
+        extension: Optional[str] = None,
+        delete_source: bool = False,
+    ) -> str:
+        """
+        Merge chunks from a directory into a single file.
+
+        Args:
+            source_dir: Directory containing chunks (usually named 0, 1, 2...).
+            target_path: Final destination path (including file identification).
+            extension: Optional file extension to append to target_path.
+            delete_source: If True, delete the source_dir and its contents after successful merge.
+
+        Returns:
+            The final absolute or relative path of the merged file.
+        """
+        ...
+
 
 # =============================================================================
 # Messaging Protocols
@@ -205,7 +230,7 @@ class MessagePublisher(Protocol):
         Args:
             topic: The routing key or topic name
             message: The message object or payload
-            **kwargs: Additional metadata (correlation_id, user_id, etc.)
+            **kwargs: Additional metadata (correlation_id, causation_id, etc.)
         """
         ...
 
@@ -293,7 +318,7 @@ class EventStore(Protocol):
         ...
 
     async def mark_as_undone(
-        self, event_id: str, undone_by: str, undo_event_id: Optional[str] = None
+        self, event_id: str, undo_event_id: Optional[str] = None
     ) -> None:
         """Mark an event as undone."""
         ...
@@ -357,7 +382,6 @@ class UndoService(Protocol):
         self,
         event_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
-        user_id: Optional[str] = None,
     ) -> Any:
         """Execute undo operation."""
         ...
@@ -366,7 +390,6 @@ class UndoService(Protocol):
         self,
         undo_event_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
-        user_id: Optional[str] = None,
     ) -> Any:
         """Redo a previously undone action."""
         ...

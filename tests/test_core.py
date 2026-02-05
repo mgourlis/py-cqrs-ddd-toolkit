@@ -99,16 +99,13 @@ def test_command_response():
     resp = CommandResponse(result="success", events=["event1", "event2"])
 
     assert resp.result == "success"
-    assert resp.response == "success"  # Test alias
     assert resp.events == ["event1", "event2"]
-    assert resp.domain_events == ["event1", "event2"]  # Test alias
 
 
 def test_query_response():
     resp = QueryResponse(result={"data": 123})
 
     assert resp.result == {"data": 123}
-    assert resp.response == {"data": 123}  # Test alias
 
 
 # --- Test Handler Registration ---

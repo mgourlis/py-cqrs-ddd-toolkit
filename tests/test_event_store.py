@@ -100,9 +100,7 @@ async def test_undo_mechanics():
     stored2 = await store.append(MyEvent.create("agg-1", "e2"))
 
     # Mark e2 as undone
-    await store.mark_as_undone(
-        stored2.event_id, undone_by="user", undo_event_id="undo-1"
-    )
+    await store.mark_as_undone(stored2.event_id, undo_event_id="undo-1")
 
     # Get events should exclude e2
     events = await store.get_events("MyAggregate", "agg-1")
@@ -185,9 +183,7 @@ async def test_middleware_persists_events():
     mock_store = MagicMock()
     mock_store.append_batch = AsyncMock()
 
-    middleware = EventStoreMiddleware(
-        event_store=mock_store, get_user_id=lambda: "user-123"
-    )
+    middleware = EventStoreMiddleware(event_store=mock_store)
 
     command = MagicMock()
 
@@ -195,7 +191,7 @@ async def test_middleware_persists_events():
     event = MyEvent.create("agg-1", "data")
 
     async def handler(*args, **kwargs):
-        return CommandResponse(result="ok", events=[event])
+        return CommandResponse(result="ok", events=[event], correlation_id="mock-corr")
 
     wrapped = middleware.apply(handler, command)
     await wrapped()
@@ -205,9 +201,8 @@ async def test_middleware_persists_events():
 
     events = kwargs["events"]
     assert len(events) == 1
-    assert events[0].user_id == "user-123"
-    assert events[0].correlation_id is not None  # Generated
-    assert kwargs["correlation_id"] == events[0].correlation_id
+    assert events[0].correlation_id == "mock-corr"
+    assert kwargs["correlation_id"] == "mock-corr"
 
 
 @pytest.mark.asyncio

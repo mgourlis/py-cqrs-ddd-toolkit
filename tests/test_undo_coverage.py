@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
+from datetime import datetime, timezone
 
 from cqrs_ddd.undo import (
     DefaultUndoService,
@@ -76,10 +77,14 @@ async def test_get_undo_stack_edge_cases():
     e1.event_type = "T1"
     e1.is_undone = False
     e1.id = 1
+    e1.occurred_at = datetime.now(timezone.utc)
+    e1.aggregate_version = 1
     e2 = MagicMock()
     e2.event_type = "T2"
     e2.is_undone = False
     e2.id = 2
+    e2.occurred_at = datetime.now(timezone.utc)
+    e2.aggregate_version = 2
 
     store.get_latest_events = AsyncMock(return_value=[e1, e2])
     registry.has_executor.return_value = True
@@ -112,12 +117,16 @@ async def test_get_undo_stack_depth_break():
     e1.event_id = "e1"
     e1.correlation_id = "c1"
     e1.id = 1
+    e1.occurred_at = datetime.now(timezone.utc)
+    e1.aggregate_version = 1
     e2 = MagicMock()
     e2.event_type = "T1"
     e2.is_undone = False
     e2.event_id = "e2"
     e2.correlation_id = "c2"
     e2.id = 2
+    e2.occurred_at = datetime.now(timezone.utc)
+    e2.aggregate_version = 2
 
     store.get_latest_events = AsyncMock(return_value=[e2, e1])  # Reverse order in logic
     registry.has_executor.return_value = True
@@ -130,10 +139,10 @@ async def test_get_undo_stack_depth_break():
         "cqrs_ddd.undo.EventTypeRegistry.hydrate", return_value=CoverageTestEvent()
     ):
         # Request depth 1, provide 2 events
-        # Loop should process e1, add it, hit depth=1, and break
+        # Loop should process e2, add it, hit depth=1, and break
         stack = await service.get_undo_stack("Agg", "1", depth=1)
         assert len(stack) == 1
-        assert stack[0].event_id == "e1"
+        assert stack[0].event_id == "e2"
 
 
 @pytest.mark.asyncio
@@ -170,6 +179,10 @@ async def test_undo_loop_branches():
     e_crash.event_type = "Crash"
     e_crash.id = 5
     e_crash.event_id = "crash-id"
+
+    for e in [e_undone, e_no_exec, e_bad_hydrate, e_cant_undo, e_crash]:
+        e.occurred_at = datetime.now(timezone.utc)
+        e.aggregate_version = e.id
 
     # Setup get_event return
     async def get_by_corr(cid):
@@ -245,6 +258,10 @@ async def test_redo_branches():
     u_ok.event_id = "u_ok"
     u_ok.causation_id = "ok_id"
     u_ok.id = 3
+
+    for e in [u_bad_orig, u_miss_orig, u_ok]:
+        e.occurred_at = datetime.now(timezone.utc)
+        e.aggregate_version = e.id
 
     store.get_events_by_correlation = AsyncMock(
         return_value=[u_bad_orig, u_miss_orig, u_ok]

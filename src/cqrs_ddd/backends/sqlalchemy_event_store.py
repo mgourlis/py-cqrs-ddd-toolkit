@@ -32,14 +32,12 @@ class SQLAlchemyEventStore:
             event_type VARCHAR(100) NOT NULL,
             event_version INTEGER DEFAULT 1,
             occurred_at TIMESTAMP WITH TIME ZONE NOT NULL,
-            user_id VARCHAR(255),
             correlation_id UUID,
             causation_id UUID,
             payload JSONB NOT NULL,
             aggregate_version INTEGER NOT NULL,
             is_undone BOOLEAN DEFAULT FALSE,
             undone_at TIMESTAMP WITH TIME ZONE,
-            undone_by VARCHAR(255),
             undo_event_id UUID,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
@@ -58,6 +56,8 @@ class SQLAlchemyEventStore:
 
         await event_store.append(my_event)
     """
+
+    tracing_db_system = "postgresql"
 
     def __init__(
         self, uow_factory: Callable[[], Any], table_name: str = "domain_events"
@@ -130,11 +130,11 @@ class SQLAlchemyEventStore:
                 f"""
                 INSERT INTO {self._table_name} (
                     event_id, aggregate_type, aggregate_id, event_type,
-                    event_version, occurred_at, user_id, correlation_id,
+                    event_version, occurred_at, correlation_id,
                     causation_id, payload, aggregate_version
                 ) VALUES (
                     :event_id, :aggregate_type, :aggregate_id, :event_type,
-                    :event_version, :occurred_at, :user_id, :correlation_id,
+                    :event_version, :occurred_at, :correlation_id,
                     :causation_id, :payload, :aggregate_version
                 ) RETURNING id
             """
@@ -153,7 +153,6 @@ class SQLAlchemyEventStore:
                     "event_type": event.event_type,
                     "event_version": event.version,
                     "occurred_at": event.occurred_at or datetime.now(timezone.utc),
-                    "user_id": event.user_id,
                     "correlation_id": event.correlation_id,
                     "causation_id": event.causation_id,
                     "payload": payload,
@@ -336,7 +335,6 @@ class SQLAlchemyEventStore:
     async def mark_as_undone(
         self,
         event_id: str,
-        undone_by: str,
         undo_event_id: Optional[str] = None,
         unit_of_work: Any = None,
     ) -> None:
@@ -350,7 +348,6 @@ class SQLAlchemyEventStore:
                 UPDATE {self._table_name}
                 SET is_undone = TRUE,
                     undone_at = :undone_at,
-                    undone_by = :undone_by,
                     undo_event_id = :undo_event_id
                 WHERE event_id = :event_id
             """
@@ -361,7 +358,6 @@ class SQLAlchemyEventStore:
                 {
                     "event_id": event_id,
                     "undone_at": datetime.now(timezone.utc),
-                    "undone_by": undone_by,
                     "undo_event_id": undo_event_id,
                 },
             )

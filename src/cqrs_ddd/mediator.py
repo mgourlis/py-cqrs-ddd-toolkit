@@ -94,8 +94,11 @@ class Mediator:
             The result from the handler
         """
         if isinstance(message, AbstractCommand):
-            return await self._send_command(message, uow)
-        return await self._dispatch(message)
+            response = await self._send_command(message, uow)
+        else:
+            response = await self._dispatch(message)
+
+        return response
 
     async def _send_command(
         self, command: Command, uow: Optional[UnitOfWork] = None
@@ -112,11 +115,22 @@ class Mediator:
         4. Dispatch background events (asynchronously, after commit).
         """
         handler = self._get_handler(type(command))
+
+        # Ensure correlation_id exists for tracking
+        from .domain_event import generate_correlation_id
+
+        if not getattr(command, "correlation_id", None):
+            try:
+                command.correlation_id = generate_correlation_id()
+            except (AttributeError, TypeError):
+                pass
+
         existing_uow = _current_uow.get()
 
         if existing_uow:
             # Nested command - reuse parent's UoW
             response = await self._dispatch_with_middlewares(command, handler)
+            self._propagate_ids(command, response)  # Early propagation
             await self._dispatch_events(response)
             return response
 
@@ -128,15 +142,7 @@ class Mediator:
                 token = _current_uow.set(uow)
                 try:
                     response = await self._dispatch_with_middlewares(command, handler)
-
-                    # Propagate correlation ID and causation ID to response
-                    if isinstance(response, CommandResponse):
-                        if not response.correlation_id:
-                            response.correlation_id = getattr(
-                                command, "correlation_id", None
-                            )
-                        if not response.causation_id:
-                            response.causation_id = getattr(command, "command_id", None)
+                    self._propagate_ids(command, response)  # Early propagation
 
                     # Flush to detect DB errors before event dispatch
                     if hasattr(uow, "session"):
@@ -155,14 +161,28 @@ class Mediator:
             await self._dispatch_background_events(response)
         else:
             response = await self._dispatch_with_middlewares(command, handler)
-            if isinstance(response, CommandResponse):
-                if not response.correlation_id:
-                    response.correlation_id = getattr(command, "correlation_id", None)
-                if not response.causation_id:
-                    response.causation_id = getattr(command, "command_id", None)
+            self._propagate_ids(command, response)  # Early propagation
             await self._dispatch_events(response)
 
         return response
+
+    def _propagate_ids(self, message: Any, response: Any) -> None:
+        """Propagate correlation ID and causation ID from command/query to response."""
+        # Check if response supports IDs via hasattr (supports both dataclasses and Pydantic)
+        if hasattr(response, "correlation_id"):
+            if not getattr(response, "correlation_id", None):
+                setattr(
+                    response, "correlation_id", getattr(message, "correlation_id", None)
+                )
+
+        if hasattr(response, "causation_id"):
+            if not getattr(response, "causation_id", None):
+                setattr(
+                    response,
+                    "causation_id",
+                    getattr(message, "command_id", None)
+                    or getattr(message, "query_id", None),
+                )
 
     async def _dispatch(self, message: Union[Command, Query]) -> Any:
         """
@@ -171,7 +191,9 @@ class Mediator:
         Used primarily for Queries, or Commands where UoW is managed externally.
         """
         handler = self._get_handler(type(message))
-        return await self._dispatch_with_middlewares(message, handler)
+        response = await self._dispatch_with_middlewares(message, handler)
+        self._propagate_ids(message, response)
+        return response
 
     async def _dispatch_with_middlewares(
         self, message: Union[Command, Query], handler: object
@@ -272,11 +294,13 @@ class Mediator:
         await self._dispatch_priority_events(response)
         await self._dispatch_background_events(response)
 
-    async def _dispatch_priority_events(self, response: CommandResponse) -> None:
+    async def _dispatch_priority_events(self, response: Any) -> None:
         """Dispatch priority events synchronously."""
         if not self._event_dispatcher:
             return
-        if not hasattr(response, "events") or not response.events:
+
+        events = getattr(response, "events", None)
+        if not events:
             return
 
         from .domain_event import enrich_event_metadata
@@ -284,18 +308,23 @@ class Mediator:
         correlation_id = getattr(response, "correlation_id", None)
         causation_id = getattr(response, "causation_id", None)
 
-        for i, event in enumerate(response.events):
+        for i, event in enumerate(events):
             enriched_event = enrich_event_metadata(
                 event, correlation_id=correlation_id, causation_id=causation_id
             )
-            response.events[i] = enriched_event
+            if hasattr(response, "events") and isinstance(response.events, list):
+                response.events[i] = enriched_event
+            # Update the event in the response list with the enriched metadata
+            # (correlation_id, causation_id, etc.)
             await self._event_dispatcher.dispatch_priority(enriched_event)
 
-    async def _dispatch_background_events(self, response: CommandResponse) -> None:
+    async def _dispatch_background_events(self, response: Any) -> None:
         """Dispatch background events asynchronously."""
         if not self._event_dispatcher:
             return
-        if not hasattr(response, "events") or not response.events:
+
+        events = getattr(response, "events", None)
+        if not events:
             return
 
         from .domain_event import enrich_event_metadata
@@ -303,11 +332,14 @@ class Mediator:
         correlation_id = getattr(response, "correlation_id", None)
         causation_id = getattr(response, "causation_id", None)
 
-        for i, event in enumerate(response.events):
+        for i, event in enumerate(events):
             enriched_event = enrich_event_metadata(
                 event, correlation_id=correlation_id, causation_id=causation_id
             )
-            response.events[i] = enriched_event
+            # update back if possible
+            if hasattr(response, "events") and isinstance(response.events, list):
+                response.events[i] = enriched_event
+
             await self._event_dispatcher.dispatch_background(enriched_event)
 
     def clear_handlers(self) -> None:

@@ -169,7 +169,7 @@ async def test_event_store_undo_marking(uow_factory):
     ev = DummyEvent(aggregate_id=aid)
     await es.append(ev)
 
-    await es.mark_as_undone(ev.event_id, undone_by="admin", undo_event_id="undo123")
+    await es.mark_as_undone(ev.event_id, undo_event_id="undo123")
 
     # get_events should skip undone
     events = await es.get_events("dummy", aid)

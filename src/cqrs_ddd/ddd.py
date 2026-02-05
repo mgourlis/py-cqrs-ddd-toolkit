@@ -45,7 +45,6 @@ class Entity(ABC):
         # Audit fields
         created_at: Optional[datetime] = None,
         updated_at: Optional[datetime] = None,
-        created_by: Optional[str] = None,
         # Soft delete
         is_deleted: bool = False,
         deleted_at: Optional[datetime] = None,
@@ -59,7 +58,6 @@ class Entity(ABC):
             version: Optimistic concurrency version (default: 0)
             created_at: When entity was created (auto-set if None)
             updated_at: When entity was last updated
-            created_by: User who created the entity
             is_deleted: Soft delete flag
             deleted_at: When entity was soft-deleted
         """
@@ -67,7 +65,6 @@ class Entity(ABC):
         self._version = version
         self._created_at = created_at or datetime.now(timezone.utc)
         self._updated_at = updated_at
-        self._created_by = created_by
         self._is_deleted = is_deleted
         self._deleted_at = deleted_at
 
@@ -90,11 +87,6 @@ class Entity(ABC):
     def updated_at(self) -> Optional[datetime]:
         """When the entity was last updated."""
         return self._updated_at
-
-    @property
-    def created_by(self) -> Optional[str]:
-        """User who created the entity."""
-        return self._created_by
 
     @property
     def is_deleted(self) -> bool:

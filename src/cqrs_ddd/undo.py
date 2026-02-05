@@ -36,7 +36,6 @@ class UndoableAction:
     event_type: str
     description: str
     occurred_at: datetime
-    user_id: Optional[str]
     can_undo: bool = True
     causation_id: Optional[str] = None
     aggregate_type: str = ""
@@ -50,7 +49,7 @@ class UndoResult:
     success: bool
     undone_events: List[str]  # Event IDs that were undone
     new_events: List[str]  # Event IDs of compensating events
-    domain_events: List["DomainEventBase"] = field(
+    events: List["DomainEventBase"] = field(
         default_factory=list
     )  # Actual event objects
     correlation_id: Optional[str] = None
@@ -64,7 +63,7 @@ class RedoResult:
 
     success: bool
     redone_events: List[str]
-    domain_events: List["DomainEventBase"] = field(
+    events: List["DomainEventBase"] = field(
         default_factory=list
     )  # Actual event objects
     correlation_id: Optional[str] = None
@@ -253,8 +252,15 @@ class DefaultUndoService(UndoService):
             count=depth * 2,  # Fetch more to filter non-undoable
         )
 
+        # Sort reverse chronological (DESC) to show latest actions first in the stack
+        # Primary: occurred_at, Secondary: aggregate_version
+        events.sort(
+            key=lambda e: (e.occurred_at, getattr(e, "aggregate_version", 0)),
+            reverse=True,
+        )
+
         actions = []
-        for event in reversed(events):
+        for event in events:
             # Skip if already undone
             if event.is_undone:
                 continue
@@ -286,7 +292,6 @@ class DefaultUndoService(UndoService):
                     event_type=event.event_type,
                     description=f"Undo {event.event_type}",
                     occurred_at=event.occurred_at,
-                    user_id=event.user_id,
                     can_undo=True,
                     causation_id=event.causation_id,
                     aggregate_type=aggregate_type,
@@ -303,7 +308,6 @@ class DefaultUndoService(UndoService):
         self,
         event_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
-        user_id: Optional[str] = None,
     ) -> UndoResult:
         """
         Execute undo operation.
@@ -311,7 +315,6 @@ class DefaultUndoService(UndoService):
         Args:
             event_id: Undo a specific event
             correlation_id: Undo all events with this correlation ID (reverse order)
-            user_id: User performing the undo
 
         Returns:
             UndoResult with success status, undone event IDs, and any errors
@@ -343,10 +346,10 @@ class DefaultUndoService(UndoService):
             stored_events = await self.event_store.get_events_by_correlation(
                 correlation_id
             )
-            # Sort reverse chronological to undo latest first
+            # Sort reverse chronological (DESC) by occurred_at/aggregate_version to undo latest first
             events_to_undo = sorted(
                 [e for e in stored_events if not e.is_undone],
-                key=lambda e: e.id,
+                key=lambda e: (e.occurred_at, getattr(e, "aggregate_version", 0)),
                 reverse=True,
             )
 
@@ -402,7 +405,6 @@ class DefaultUndoService(UndoService):
                         comp_event,
                         correlation_id=undo_correlation_id,
                         causation_id=stored.event_id,
-                        user_id=user_id,
                     )
 
                     await self.event_store.append(comp_event)
@@ -412,7 +414,6 @@ class DefaultUndoService(UndoService):
                 # Mark original as undone
                 await self.event_store.mark_as_undone(
                     event_id=stored.event_id,
-                    undone_by=user_id or "system",
                     undo_event_id=compensating_events[0].event_id
                     if compensating_events
                     else None,
@@ -433,7 +434,7 @@ class DefaultUndoService(UndoService):
             success=len(undone_ids) > 0 and len(errors) == 0,
             undone_events=undone_ids,
             new_events=new_event_ids,
-            domain_events=all_domain_events,
+            events=all_domain_events,
             correlation_id=undo_correlation_id,
             causation_id=event_id,
             errors=errors,
@@ -465,7 +466,6 @@ class DefaultUndoService(UndoService):
         self,
         undo_event_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
-        user_id: Optional[str] = None,
     ) -> RedoResult:
         """
         Redo a previously undone action.
@@ -473,7 +473,6 @@ class DefaultUndoService(UndoService):
         Args:
             undo_event_id: The compensating event's ID from the undo operation
             correlation_id: The correlation ID of an undo batch to redo
-            user_id: User performing the redo
 
         Returns:
             RedoResult with success status and redone event IDs
@@ -503,10 +502,13 @@ class DefaultUndoService(UndoService):
             events_to_redo_from = await self.event_store.get_events_by_correlation(
                 correlation_id
             )
-            # Sort chronological? Usually redoing a batch should follow the undo order
-            # but since we're re-applying, the order of the undo events themselves
-            # (which were created in a specific sequence during undo) is the key.
-            events_to_redo_from = sorted(events_to_redo_from, key=lambda e: e.id)
+            # Redoing a batch must follow original chronological order.
+            # Compensating events are stored in reverse-order of the original events.
+            # We sort them by occurred_at (ASC) to find the 'start' of the redo sequence.
+            events_to_redo_from = sorted(
+                events_to_redo_from,
+                key=lambda e: (e.occurred_at, getattr(e, "aggregate_version", 0)),
+            )
 
         if not events_to_redo_from:
             return RedoResult(
@@ -562,7 +564,6 @@ class DefaultUndoService(UndoService):
                     redo_event = enrich_event_metadata(
                         redo_event,
                         correlation_id=redo_correlation_id,
-                        user_id=user_id,
                         causation_id=undo_event.event_id,
                     )
                     await self.event_store.append(redo_event)
@@ -584,7 +585,7 @@ class DefaultUndoService(UndoService):
         return RedoResult(
             success=len(redone_ids) > 0 and len(errors) == 0,
             redone_events=redone_ids,
-            domain_events=redone_domain_events,
+            events=redone_domain_events,
             correlation_id=redo_correlation_id,
             causation_id=undo_event_id or correlation_id,
             errors=errors,
